@@ -2,23 +2,19 @@ import boto3
 import subprocess
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+import os
+import json
+import logging
 
-# Cluster mapping for testing
-CLUSTER_MAPPING = {
-    "blue": "sky-eks-dev-cluster-blue",
-    "green": "sky-eks-dev-cluster-green"
-}
+# Load environment variables
+REGION = os.getenv("AWS_REGION", "us-east-1")
+CLUSTER_MAPPING = json.loads(os.getenv("CLUSTER_MAPPING", "{}"))
+ALLOWED_NAMESPACES = json.loads(os.getenv("ALLOWED_NAMESPACES", "[]"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-def fetch_clusters(region):
-    """
-    Fetch all EKS clusters in the specified region.
-    """
-    eks_client = boto3.client("eks", region_name=region)
-    try:
-        response = eks_client.list_clusters()
-        return response.get("clusters", [])
-    except Exception as e:
-        raise Exception(f"Failed to list clusters: {str(e)}")
+# Configure logging
+logging.basicConfig(level=LOG_LEVEL)
+logger = logging.getLogger(__name__)
 
 def update_kubeconfig(cluster_name, region):
     """
@@ -27,8 +23,9 @@ def update_kubeconfig(cluster_name, region):
     try:
         command = ["aws", "eks", "update-kubeconfig", "--region", region, "--name", cluster_name]
         subprocess.run(command, check=True)
-        print(f"Kubeconfig updated for cluster: {cluster_name}")
+        logger.info(f"Kubeconfig updated for cluster: {cluster_name}")
     except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to update kubeconfig: {str(e)}")
         raise Exception(f"Failed to update kubeconfig: {str(e)}")
 
 def recycle_pod(namespace, pod_name):
@@ -40,15 +37,16 @@ def recycle_pod(namespace, pod_name):
         v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
         return f"Pod {pod_name} recycled in namespace {namespace}."
     except ApiException as e:
-        return {"error": f"API Exception occurred: {str(e)}"}
+        logger.error(f"Kubernetes API Exception: {str(e)}")
+        raise
     except Exception as e:
-        return {"error": f"Failed to recycle pod: {str(e)}"}
+        logger.error(f"Failed to recycle pod: {str(e)}")
+        raise
 
 def lambda_handler(event, context):
     """
     Lambda function handler to recycle a Kubernetes pod.
     """
-    region = event.get("region", "us-east-1")
     cluster_id = event.get("clusterId")
     namespace = event.get("namespace")
     pod_name = event.get("podName")
@@ -61,6 +59,13 @@ def lambda_handler(event, context):
     if not pod_name:
         return {"statusCode": 400, "body": "Error: 'podName' parameter is required."}
 
+    # Check if namespace is allowed
+    if namespace not in ALLOWED_NAMESPACES:
+        return {
+            "statusCode": 400,
+            "body": f"Error: Namespace '{namespace}' is not allowed. Allowed namespaces: {', '.join(ALLOWED_NAMESPACES)}"
+        }
+
     # Map cluster ID to cluster name
     cluster_name = CLUSTER_MAPPING.get(cluster_id)
     if not cluster_name:
@@ -68,7 +73,7 @@ def lambda_handler(event, context):
 
     try:
         # Update kubeconfig for the selected cluster
-        update_kubeconfig(cluster_name, region)
+        update_kubeconfig(cluster_name, REGION)
 
         # Perform Kubernetes operations
         config.load_kube_config()  # Load updated kubeconfig
@@ -77,16 +82,3 @@ def lambda_handler(event, context):
         return {"statusCode": 200, "body": result}
     except Exception as e:
         return {"statusCode": 500, "body": str(e)}
-
-if __name__ == "__main__":
-    # Example event for local testing
-    event = {
-        "region": "us-east-1",
-        "clusterId": "blue",         # Specify the cluster to use (e.g., 'blue' or 'green')
-        "namespace": "default",     # Kubernetes namespace
-        "podName": "example-pod"    # Pod name to recycle
-    }
-
-    # Simulate Lambda handler locally
-    result = lambda_handler(event, None)
-    print(result)
