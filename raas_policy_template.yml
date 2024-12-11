@@ -1,0 +1,24 @@
+---
+statements:
+- actions:
+  - eks:DescribeCluster
+  - eks:ListClusters
+  - eks:UpdateKubeconfig
+  effect: "Allow"
+  resources:
+  - !Sub "arn:aws:eks:${AWS::Region}:${AWS::AccountId}:cluster/*"
+
+- actions:
+  - lambda:InvokeFunction
+  - lambda:GetFunctionConfiguration
+  effect: "Allow"
+  resources:
+  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+
+- actions:
+  - cloudwatch:PutMetricAlarm
+  - cloudwatch:DescribeAlarms
+  - cloudwatch:DeleteAlarms
+  effect: "Allow"
+  resources:
+  - !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*"
