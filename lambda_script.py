@@ -7,9 +7,10 @@ import json
 import logging
 
 # Load environment variables
-REGION = os.environ.get("AWS_REGION")
+REGION = os.environ.get("AWS_REGION", "us-east-1")
 CLUSTER_MAPPING = json.loads(os.getenv("CLUSTER_MAPPING", "{}"))
 ALLOWED_NAMESPACES = json.loads(os.getenv("ALLOWED_NAMESPACES", "[]"))
+KUBE_TOKEN = os.getenv("KUBE_TOKEN")  # Kubernetes Bearer Token
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Configure logging
@@ -43,11 +44,13 @@ preferences: {{}}
 users:
 - name: {cluster_name}
   user:
-    token: {os.environ.get('KUBE_TOKEN')}
+    token: {KUBE_TOKEN}
 """
-        with open("/tmp/kubeconfig", "w") as kubeconfig_file:
+        kubeconfig_path = "/tmp/kubeconfig"
+        with open(kubeconfig_path, "w") as kubeconfig_file:
             kubeconfig_file.write(kubeconfig_content)
-        os.environ["KUBECONFIG"] = "/tmp/kubeconfig"
+        os.environ["KUBECONFIG"] = kubeconfig_path
+
         logger.info(f"Kubeconfig updated for cluster: {cluster_name}")
     except Exception as e:
         logger.error(f"Failed to update kubeconfig: {str(e)}")
@@ -101,9 +104,10 @@ def lambda_handler(event, context):
         update_kubeconfig_via_sdk(cluster_name, REGION)
 
         # Perform Kubernetes operations
-        config.load_kube_config()  # Load updated kubeconfig
+        config.load_kube_config(config_file="/tmp/kubeconfig")  # Load updated kubeconfig
         result = recycle_pod(namespace, pod_name)
 
         return {"statusCode": 200, "body": result}
     except Exception as e:
+        logger.error(f"Error: {str(e)}")
         return {"statusCode": 500, "body": str(e)}
