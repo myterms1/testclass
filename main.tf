@@ -3,9 +3,9 @@ resource "aws_lambda_function" "lambda" {
   function_name = var.function_name
   description   = var.description
 
-  architectures = var.architectures
-  filename      = "${path.module}/${var.zip_file}" # Use local .zip file in the repo
-  source_code_hash = filebase64sha256("${path.module}/${var.zip_file}")
+  architectures    = var.architectures
+  filename         = "${path.module}/source/${var.zip_file}" # Updated to point to the source folder
+  source_code_hash = filebase64sha256("${path.module}/source/${var.zip_file}")
   handler          = var.handler
   runtime          = var.runtime
   memory_size      = var.memory_size
