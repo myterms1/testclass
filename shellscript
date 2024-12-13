@@ -1,0 +1,59 @@
+From the image, it seems the issue revolves around differences in behavior of PowerShell logging when running a script manually versus triggering it through a Step Function. Here’s an explanation and possible resolutions for this problem:
+
+Possible Causes
+	1.	Write-Host Behavior:
+	•	Write-Host outputs directly to the console and does not capture into the PowerShell pipeline. Hence, it’s not captured by Start-Transcript or redirected output (e.g., piping to a file).
+	•	This might explain why your logs appear different when running manually versus in a Step Function, as Write-Host is console-dependent.
+	2.	Start-Transcript Scope:
+	•	Start-Transcript captures output to the console but may not capture output produced during the Step Function execution if the console context differs.
+	•	The Step Function might run the script in a restricted or headless context, limiting the logging output.
+	3.	Output Redirection in Step Functions:
+	•	When scripts are run through Step Functions or automation tools, the output streams (stdout and stderr) might be redirected, which can result in incomplete log capture.
+	4.	Permission or Execution Policy:
+	•	If the Step Function alters the environment (e.g., runs with restricted permissions or a different user profile), certain outputs may not be captured.
+
+Solutions
+	1.	Replace Write-Host with Write-Output:
+	•	Replace all occurrences of Write-Host with Write-Output or use Write-Verbose/Write-Debug if you need contextual output.
+	•	Example:
+
+Write-Output "This will be captured in logs."
+
+
+	2.	Use All Output Streams:
+	•	Ensure your script captures all output streams (StandardOutput, StandardError).
+	•	Example for logging in PowerShell:
+
+Start-Transcript -Path "C:\Logs\script-log.txt"
+
+# Your script logic
+Write-Output "Normal output"
+Write-Error "Error message"
+
+Stop-Transcript
+
+
+	3.	Modify Step Function Execution:
+	•	Verify that the Step Function invokes the PowerShell script in the same context (user permissions and environment).
+	•	Redirect output explicitly within the Step Function if necessary:
+
+powershell.exe -File your-script.ps1 > output.log 2>&1
+
+
+	4.	Enable Verbose and Debug Output:
+	•	Add -Verbose or -Debug flags when running the script.
+	•	Include a $VerbosePreference variable in your script:
+
+$VerbosePreference = "Continue"
+Write-Verbose "Verbose output enabled."
+
+
+	5.	Check Step Function Logs:
+	•	If the Step Function suppresses certain log levels, ensure it is configured to capture all outputs, including informational and verbose messages.
+
+Testing
+	•	Run the script locally with Write-Output and Start-Transcript to confirm it captures logs.
+	•	Execute the script through the Step Function with added debugging logs to determine where the output changes.
+	•	Adjust the environment in which the Step Function runs to ensure it matches the manual execution context.
+
+By addressing the handling of Write-Host and ensuring output capture consistency, you should see complete logs in your .txt file, even when triggered through Step Functions. Let me know if you need further clarification!
