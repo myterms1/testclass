@@ -1,0 +1,30 @@
+# Step 1: Use AWS Lambda Python Base Image
+FROM public.ecr.aws/lambda/python:3.11
+
+# Arguments for AWS IAM Authenticator version and platform
+ARG AWS_IAM_AUTH_VERSION=0.6.14
+ARG AWS_IAM_AUTH_PLATFORM=linux_amd64
+
+# Step 2: Add Zscaler Certificate to the Trusted Store
+COPY zscaler.pem /etc/pki/ca-trust/source/anchors/zscaler.crt
+
+# Step 3: Manually Trust the Zscaler Certificate for yum
+RUN update-ca-trust extract && \
+    echo "sslverify=false" >> /etc/yum.conf
+
+# Step 4: Install Required Tools and AWS IAM Authenticator
+RUN yum install -y ca-certificates curl && \
+    curl --cacert /etc/pki/ca-trust/source/anchors/zscaler.crt \
+      -fsSL https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v${AWS_IAM_AUTH_VERSION}/aws-iam-authenticator_${AWS_IAM_AUTH_VERSION}_${AWS_IAM_AUTH_PLATFORM} \
+      -o /usr/local/bin/aws-iam-authenticator && \
+    chmod a+rx /usr/local/bin/aws-iam-authenticator
+
+# Step 5: Install Required Python Libraries
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Step 6: Copy the Python Lambda Function Code
+COPY recycling_pod_script.py ${LAMBDA_TASK_ROOT}/
+
+# Step 7: Set the Lambda Handler
+CMD [ "recycling_pod_script.lambda_handler" ]
