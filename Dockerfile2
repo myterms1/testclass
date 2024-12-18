@@ -1,34 +1,35 @@
-# Step 1: Use AWS Lambda Python Base Image
-FROM public.ecr.aws/lambda/python:3.11
+# Use AWS Lambda base image for Python 3.9
+FROM public.ecr.aws/lambda/python:3.9
 
 # Arguments for AWS IAM Authenticator version and platform
 ARG AWS_IAM_AUTH_VERSION=0.6.14
 ARG AWS_IAM_AUTH_PLATFORM=linux_amd64
 
-# Step 2: Install ca-certificates, curl, vim, and AWS CLI
-COPY zscaler.pem /etc/pki/ca-trust/source/anchors/zscaler.crt
-RUN yum install -y ca-certificates curl unzip vim && update-ca-trust extract
+# Step 1: Add trust for Zscaler CA
+COPY zscaler.pem /etc/pki/ca-trust/source/anchors/zscaler.pem
+RUN update-ca-trust extract
 
-# Step 3: Install AWS CLI v2
-RUN curl --cacert /etc/pki/ca-trust/source/anchors/zscaler.crt \
-      "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
-  && unzip awscliv2.zip \
-  && ./aws/install \
-  && rm -rf awscliv2.zip aws
-
-# Step 4: Install AWS IAM Authenticator
+# Step 2: Install AWS IAM Authenticator
 RUN mkdir -p /usr/local/bin \
-  && curl --cacert /etc/pki/ca-trust/source/anchors/zscaler.crt \
-      -fsSL https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v${AWS_IAM_AUTH_VERSION}/aws-iam-authenticator_${AWS_IAM_AUTH_VERSION}_${AWS_IAM_AUTH_PLATFORM} \
-      -o /usr/local/bin/aws-iam-authenticator \
-  && chmod a+rx /usr/local/bin/aws-iam-authenticator
+    && curl --cacert /etc/pki/ca-trust/source/anchors/zscaler.pem \
+        -fsSL https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v${AWS_IAM_AUTH_VERSION}/aws-iam-authenticator_${AWS_IAM_AUTH_VERSION}_${AWS_IAM_AUTH_PLATFORM} \
+        -o /usr/local/bin/aws-iam-authenticator \
+    && chmod a+rx /usr/local/bin/aws-iam-authenticator
 
-# Step 5: Install Required Python Libraries
+# Step 3: Install Vim and AWS CLI v2
+RUN yum install -y vim unzip \
+    && curl --cacert /etc/pki/ca-trust/source/anchors/zscaler.pem \
+        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm -rf awscliv2.zip aws
+
+# Step 4: Copy the Python script and requirements
+COPY recycling_pod_script.py ${LAMBDA_TASK_ROOT}/
 COPY requirements.txt .
+
+# Step 5: Install required Python libraries
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Step 6: Copy the Python Lambda Function Code
-COPY recycling_pod_script.py ${LAMBDA_TASK_ROOT}/
-
-# Step 7: Set the Lambda Handler
+# Step 6: Set the Lambda handler
 CMD [ "recycling_pod_script.lambda_handler" ]
