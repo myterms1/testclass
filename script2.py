@@ -1,11 +1,8 @@
 import os
-import subprocess
-import json
 import logging
 import boto3
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from botocore.exceptions import BotoCoreError, ClientError
 import base64
 
 # Set up logging
@@ -17,25 +14,22 @@ REGION = "us-east-1"
 def get_eks_token(cluster_name):
     """Retrieve the token for authenticating with an EKS cluster."""
     try:
-        eks_client = boto3.client("eks", region_name=REGION)
-        cluster_info = eks_client.describe_cluster(name=cluster_name)
+        session = boto3.session.Session()
+        eks_client = session.client("eks", region_name=REGION)
 
+        # Get cluster details
+        cluster_info = eks_client.describe_cluster(name=cluster_name)
         cluster_endpoint = cluster_info["cluster"]["endpoint"]
         cluster_cert = cluster_info["cluster"]["certificateAuthority"]["data"]
 
-        # Generate token using boto3
-        sts_client = boto3.client("sts")
-        caller_identity = sts_client.get_caller_identity()
-        token = (
-            f"k8s-aws-v1."
-            + base64.urlsafe_b64encode(
-                f"eks:{caller_identity['Arn']}".encode()
-            ).decode().rstrip("=")
-        )
+        # Use boto3 to generate the token
+        sts_client = session.client("sts", region_name=REGION)
+        identity = sts_client.get_caller_identity()
+        token = f"k8s-aws-v1.{base64.urlsafe_b64encode(f'{identity['Arn']}:{identity['Account']}'.encode()).decode().rstrip('=')}"
 
         return token, cluster_endpoint, cluster_cert
-    except (BotoCoreError, ClientError) as e:
-        logger.error(f"Error retrieving EKS token: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error retrieving EKS token: {e}")
         raise
 
 def configure_k8s_client(cluster_name):
@@ -51,7 +45,7 @@ def configure_k8s_client(cluster_name):
     # Write the certificate authority data to a file
     with open(configuration.ssl_ca_cert, "w") as cert_file:
         cert_file.write(base64.b64decode(cluster_cert).decode("utf-8"))
-    
+
     client.Configuration.set_default(configuration)
 
 def delete_pod(namespace, pod_name):
