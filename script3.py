@@ -11,7 +11,8 @@ import json
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-REGION = os.getenv("AWS_REGION", "us-east-1")
+# Use runtime-provided AWS_REGION
+REGION = os.getenv("AWS_REGION")
 CLUSTER_NAME = os.getenv("EKS_CLUSTER_NAME")
 NAMESPACE = os.getenv("K8S_NAMESPACE")
 
