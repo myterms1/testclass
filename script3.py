@@ -3,68 +3,62 @@ import logging
 import boto3
 from kubernetes import client
 from kubernetes.client.rest import ApiException
-import base64  # Ensure base64 is imported
+from botocore.exceptions import BotoCoreError, ClientError
+import base64
 
 # Set up logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-def get_eks_token(cluster_name, region):
-    """
-    Retrieve the token for authenticating with an EKS cluster using boto3.
-    """
-    try:
-        logger.info(f"Generating token for cluster: {cluster_name}")
-        eks_client = boto3.client('eks', region_name=region)
-        cluster_info = eks_client.describe_cluster(name=cluster_name)
-        cluster_endpoint = cluster_info['cluster']['endpoint']
-        cluster_cert = cluster_info['cluster']['certificateAuthority']['data']
+REGION = os.getenv("AWS_REGION", "us-east-1")  # Default region if not set
 
-        # Generate the token using STS
-        sts_client = boto3.client('sts', region_name=region)
-        caller_identity = sts_client.get_caller_identity()
+def get_eks_token(cluster_name, region):
+    """Retrieve the token for authenticating with an EKS cluster."""
+    try:
+        # Using AWS CLI to generate the token
+        session = boto3.session.Session()
+        eks_client = session.client("eks", region_name=region)
+        cluster_info = eks_client.describe_cluster(name=cluster_name)
+
+        cluster_endpoint = cluster_info["cluster"]["endpoint"]
+        cluster_cert = cluster_info["cluster"]["certificateAuthority"]["data"]
+
+        sts_client = session.client("sts", region_name=region)
+        identity = sts_client.get_caller_identity()
         token = (
-            f"k8s-aws-v1."
-            + base64.urlsafe_b64encode(
-                f"{caller_identity['Arn']}:{caller_identity['Account']}".encode()
-            ).decode().rstrip("=")
+            "k8s-aws-v1."
+            + base64.urlsafe_b64encode(f"{identity['Arn']}:{identity['Account']}".encode()).decode().rstrip("=")
         )
+
         return token, cluster_endpoint, cluster_cert
-    except Exception as e:
-        logger.error(f"Error generating EKS token: {str(e)}")
+    except (BotoCoreError, ClientError, Exception) as e:
+        logger.error(f"Error retrieving EKS token: {str(e)}")
         raise
 
 def configure_k8s_client(cluster_name, region):
-    """
-    Configure Kubernetes client to interact with the EKS cluster.
-    """
+    """Configure Kubernetes client to interact with EKS cluster."""
+    token, cluster_endpoint, cluster_cert = get_eks_token(cluster_name, region)
+    logger.info("Token successfully retrieved for Kubernetes client configuration.")
+
+    # Configure the Kubernetes client
+    configuration = client.Configuration()
+    configuration.host = cluster_endpoint
+    configuration.verify_ssl = True
+    configuration.api_key["authorization"] = f"Bearer {token}"
+
+    # Write the certificate authority data to a temporary file
+    ca_file = "/tmp/eks-ca.crt"
+    with open(ca_file, "w") as cert_file:
+        cert_file.write(base64.b64decode(cluster_cert).decode("utf-8"))
+    configuration.ssl_ca_cert = ca_file
+
+    # Set the default configuration
+    client.Configuration.set_default(configuration)
+
+def delete_pod(namespace, pod_name, cluster_name, region):
+    """Delete a specific pod in the given namespace."""
     try:
-        token, cluster_endpoint, cluster_cert = get_eks_token(cluster_name, region)
-        logger.info("Token successfully retrieved for Kubernetes client configuration.")
-
-        # Configure the Kubernetes client
-        configuration = client.Configuration()
-        configuration.host = cluster_endpoint
-        configuration.verify_ssl = True
-        configuration.api_key["authorization"] = f"Bearer {token}"
-
-        # Write the certificate authority data to a temporary file
-        ca_file = "/tmp/eks-ca.crt"
-        with open(ca_file, "w") as cert_file:
-            cert_file.write(base64.b64decode(cluster_cert).decode("utf-8"))
-        configuration.ssl_ca_cert = ca_file
-
-        # Set the default configuration
-        client.Configuration.set_default(configuration)
-    except Exception as e:
-        logger.error(f"Error configuring Kubernetes client: {str(e)}")
-        raise
-
-def delete_pod(namespace, pod_name):
-    """
-    Delete a specific pod in the given namespace.
-    """
-    try:
+        configure_k8s_client(cluster_name, region)  # Regenerate token before use
         v1 = client.CoreV1Api()
         logger.info(f"Attempting to delete pod: {pod_name} in namespace: {namespace}")
         response = v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
@@ -74,33 +68,29 @@ def delete_pod(namespace, pod_name):
         raise
 
 def lambda_handler(event, context):
-    """
-    Lambda handler function to process events and delete specified pods.
-    """
+    """Main Lambda handler function."""
     try:
         cluster_name = os.getenv("EKS_CLUSTER_NAME")
-        region = os.getenv("AWS_REGION")
-        if not cluster_name or not region:
-            raise ValueError("EKS_CLUSTER_NAME and AWS_REGION environment variables must be set.")
-
-        # Configure Kubernetes client
-        configure_k8s_client(cluster_name, region)
+        if not cluster_name:
+            raise ValueError("EKS_CLUSTER_NAME environment variable is not set.")
 
         # Fetch pod details from the event
         pods_to_delete = event.get("pods", [])
+
         if not pods_to_delete:
-            raise ValueError("No pods specified in the event for deletion.")
+            raise ValueError("No pods specified in the event.")
 
         for pod in pods_to_delete:
             namespace = pod.get("namespace")
             pod_name = pod.get("name")
+
             if not namespace or not pod_name:
-                logger.warning(f"Invalid pod details: {pod}. Skipping.")
+                logger.warning("Namespace or pod name is missing in the event. Skipping.")
                 continue
 
-            delete_pod(namespace, pod_name)
+            delete_pod(namespace, pod_name, cluster_name, REGION)
 
-        return {"status": "success", "message": "All specified pods deleted successfully."}
+        return {"status": "success"}
     except Exception as e:
-        logger.error(f"Lambda function encountered an error: {str(e)}")
+        logger.error(f"Lambda function failed: {e}")
         return {"status": "error", "message": str(e)}
