@@ -1,0 +1,8 @@
+{
+    "pods": [
+        {
+            "name": "fa",
+            "namespace": "dev"
+        }
+    ]
+}
