@@ -1,0 +1,16 @@
+{
+  "name": "lambda-function",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@aws-sdk/client-eks": "^3.0.0",
+    "@kubernetes/client-node": "^0.18.0"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "Lambda function for Kubernetes pod deletion"
+}
