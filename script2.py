@@ -17,23 +17,26 @@ REGION = "us-east-1"
 def get_eks_token(cluster_name):
     """Retrieve the token for authenticating with an EKS cluster."""
     try:
-        # Using AWS CLI to generate the token
-        cmd = [
-            "aws", "eks", "get-token",
-            "--cluster-name", cluster_name,
-            "--region", REGION
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        token_output = json.loads(result.stdout)
-        token = token_output["status"]["token"]
-        cluster_endpoint = token_output["status"]["clusterEndpoint"]
-        cluster_cert = token_output["status"]["clusterCertificateAuthorityData"]
+        eks_client = boto3.client("eks", region_name=REGION)
+        cluster_info = eks_client.describe_cluster(name=cluster_name)
+
+        cluster_endpoint = cluster_info["cluster"]["endpoint"]
+        cluster_cert = cluster_info["cluster"]["certificateAuthority"]["data"]
+
+        # Generate token using boto3
+        sts_client = boto3.client("sts")
+        caller_identity = sts_client.get_caller_identity()
+        token = (
+            f"k8s-aws-v1."
+            + base64.urlsafe_b64encode(
+                f"eks:{caller_identity['Arn']}".encode()
+            ).decode().rstrip("=")
+        )
 
         return token, cluster_endpoint, cluster_cert
-    except subprocess.CalledProcessError as e:
+    except (BotoCoreError, ClientError) as e:
         logger.error(f"Error retrieving EKS token: {str(e)}")
         raise
-
 
 def configure_k8s_client(cluster_name):
     """Configure Kubernetes client to interact with EKS cluster."""
