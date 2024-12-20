@@ -1,9 +1,11 @@
 import os
+import json
 import logging
 import boto3
-from kubernetes import client, config
-from kubernetes.client.rest import ApiException
 import base64
+from kubernetes import client
+from kubernetes.client.rest import ApiException
+from botocore.exceptions import BotoCoreError, ClientError
 
 # Set up logging
 logger = logging.getLogger()
@@ -25,7 +27,7 @@ def get_eks_token(cluster_name):
         # Use boto3 to generate the token
         sts_client = session.client("sts", region_name=REGION)
         identity = sts_client.get_caller_identity()
-        token = f"k8s-aws-v1.{base64.urlsafe_b64encode(f'{identity['Arn']}:{identity['Account']}'.encode()).decode().rstrip('=')}"
+        token = f"k8s-aws-v1.{base64.urlsafe_b64encode((identity['Arn'] + ':' + identity['Account']).encode()).decode().rstrip('=')}"
 
         return token, cluster_endpoint, cluster_cert
     except Exception as e:
@@ -34,19 +36,23 @@ def get_eks_token(cluster_name):
 
 def configure_k8s_client(cluster_name):
     """Configure Kubernetes client to interact with EKS cluster."""
-    token, cluster_endpoint, cluster_cert = get_eks_token(cluster_name)
+    try:
+        token, cluster_endpoint, cluster_cert = get_eks_token(cluster_name)
 
-    configuration = client.Configuration()
-    configuration.host = cluster_endpoint
-    configuration.verify_ssl = True
-    configuration.ssl_ca_cert = "/tmp/eks-ca.crt"
-    configuration.api_key["authorization"] = f"Bearer {token}"
+        configuration = client.Configuration()
+        configuration.host = cluster_endpoint
+        configuration.verify_ssl = True
+        configuration.ssl_ca_cert = "/tmp/eks-ca.crt"
+        configuration.api_key["authorization"] = f"Bearer {token}"
 
-    # Write the certificate authority data to a file
-    with open(configuration.ssl_ca_cert, "w") as cert_file:
-        cert_file.write(base64.b64decode(cluster_cert).decode("utf-8"))
-
-    client.Configuration.set_default(configuration)
+        # Write the certificate authority data to a file
+        with open(configuration.ssl_ca_cert, "w") as cert_file:
+            cert_file.write(base64.b64decode(cluster_cert).decode("utf-8"))
+        
+        client.Configuration.set_default(configuration)
+    except Exception as e:
+        logger.error(f"Error configuring Kubernetes client: {e}")
+        raise
 
 def delete_pod(namespace, pod_name):
     """Delete a specific pod in the given namespace."""
@@ -62,6 +68,7 @@ def delete_pod(namespace, pod_name):
 def lambda_handler(event, context):
     """Main Lambda handler function."""
     try:
+        # Fetch the cluster name from environment variables
         cluster_name = os.getenv("EKS_CLUSTER_NAME")
         if not cluster_name:
             raise ValueError("EKS_CLUSTER_NAME environment variable is not set.")
