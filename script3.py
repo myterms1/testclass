@@ -10,24 +10,26 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 def get_eks_token(cluster_name, region):
-    """Retrieve an EKS authentication token using boto3."""
+    """Retrieve an EKS authentication token using AWS STS."""
     try:
         eks_client = boto3.client('eks', region_name=region)
         cluster_info = eks_client.describe_cluster(name=cluster_name)
-        token = eks_client.generate_presigned_url(
-            'get_token',
-            Params={'clusterName': cluster_name},
-            ExpiresIn=60
-        )
         endpoint = cluster_info['cluster']['endpoint']
         ca_cert = cluster_info['cluster']['certificateAuthority']['data']
+
+        # Generate the token
+        sts_client = boto3.client('sts', region_name=region)
+        identity = sts_client.get_caller_identity()
+        arn = identity['Arn']
+        token = f"k8s-aws-v1." + base64.urlsafe_b64encode(f"{arn}".encode()).decode().rstrip("=")
+
         return token, endpoint, ca_cert
     except Exception as e:
-        logger.error(f"Error retrieving token: {str(e)}")
+        logger.error(f"Error retrieving EKS token: {e}")
         raise
 
 def configure_k8s_client(cluster_name, region):
-    """Configure Kubernetes client."""
+    """Configure the Kubernetes client."""
     token, endpoint, ca_cert = get_eks_token(cluster_name, region)
 
     configuration = client.Configuration()
@@ -36,7 +38,7 @@ def configure_k8s_client(cluster_name, region):
     configuration.api_key["authorization"] = f"Bearer {token}"
     configuration.ssl_ca_cert = "/tmp/ca.crt"
 
-    # Save the certificate to a temporary file
+    # Write CA certificate to a file
     with open(configuration.ssl_ca_cert, "w") as cert_file:
         cert_file.write(base64.b64decode(ca_cert).decode("utf-8"))
 
@@ -48,7 +50,7 @@ def delete_pod(namespace, pod_name):
         v1 = client.CoreV1Api()
         logger.info(f"Deleting pod {pod_name} in namespace {namespace}...")
         v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
-        logger.info(f"Successfully deleted pod {pod_name} in namespace {namespace}.")
+        logger.info(f"Successfully deleted pod {pod_name}.")
     except ApiException as e:
         logger.error(f"Failed to delete pod {pod_name}: {str(e)}")
         raise
