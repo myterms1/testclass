@@ -79,18 +79,16 @@ exports.handler = async (event) => {
         }
 
         for (const pod of podsToDelete) {
+            console.log(`Pod data received: ${JSON.stringify(pod, null, 2)}`);
             const podName = pod?.name?.toString();
             const namespace = pod?.namespace?.toString();
 
-            console.log("Pod Name:", podName);
-            console.log("Namespace:", namespace);
-
             if (!podName) {
-                console.error("Pod name is null or undefined. Event pod data:", JSON.stringify(pod, null, 2));
+                console.error(`Error: podName is null or undefined. Full pod data: ${JSON.stringify(pod, null, 2)}`);
                 throw new Error("Pod name is null or undefined");
             }
             if (!namespace) {
-                console.error("Namespace is null or undefined. Event pod data:", JSON.stringify(pod, null, 2));
+                console.error(`Error: namespace is null or undefined. Full pod data: ${JSON.stringify(pod, null, 2)}`);
                 throw new Error("Namespace is null or undefined");
             }
 
