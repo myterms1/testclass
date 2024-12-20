@@ -1,101 +1,92 @@
 import os
 import logging
-import boto3
-from kubernetes import client, config
-from kubernetes.client.rest import ApiException
-import base64
 import subprocess
 import json
+from kubernetes import client
+from kubernetes.client.rest import ApiException
 
 # Set up logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Use runtime-provided AWS_REGION
-REGION = os.getenv("AWS_REGION")
-CLUSTER_NAME = os.getenv("EKS_CLUSTER_NAME")
-NAMESPACE = os.getenv("K8S_NAMESPACE")
-
-def get_eks_cluster_info(cluster_name):
-    """Retrieve EKS cluster endpoint and certificate authority data."""
+def get_eks_token(cluster_name):
+    """
+    Retrieve the token for authenticating with an EKS cluster using AWS CLI.
+    """
     try:
-        eks_client = boto3.client("eks", region_name=REGION)
-        cluster_info = eks_client.describe_cluster(name=cluster_name)
-        return {
-            "endpoint": cluster_info["cluster"]["endpoint"],
-            "ca_data": cluster_info["cluster"]["certificateAuthority"]["data"]
-        }
-    except Exception as e:
-        logger.error(f"Error retrieving EKS cluster info: {e}")
-        raise
-
-def generate_token(cluster_name):
-    """Generate a token using aws-iam-authenticator."""
-    try:
+        logger.info(f"Generating token for cluster: {cluster_name}")
         cmd = [
-            "aws-iam-authenticator", "token", "-i", cluster_name
+            "aws", "eks", "get-token",
+            "--cluster-name", cluster_name,
+            "--region", "us-east-1"
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        token_data = json.loads(result.stdout)
-        return token_data["status"]["token"]
+        token_output = json.loads(result.stdout)
+        return token_output["status"]["token"]
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error generating token: {e.stderr}")
-        raise
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding token JSON: {e}")
+        logger.error(f"Error generating EKS token: {e.stderr}")
         raise
 
 def configure_k8s_client(cluster_name):
-    """Set up Kubernetes client dynamically with token-based authentication."""
-    cluster_info = get_eks_cluster_info(cluster_name)
-    token = generate_token(cluster_name)
+    """
+    Configure Kubernetes client to interact with the EKS cluster.
+    """
+    try:
+        token = get_eks_token(cluster_name)
+        logger.info("Token successfully retrieved for Kubernetes client configuration.")
 
-    configuration = client.Configuration()
-    configuration.host = cluster_info["endpoint"]
-    configuration.verify_ssl = True
-    configuration.ssl_ca_cert = "/tmp/eks-ca.crt"
-    configuration.api_key = {"authorization": f"Bearer {token}"}
-
-    # Write the CA data to a temporary file
-    with open(configuration.ssl_ca_cert, "w") as ca_file:
-        ca_file.write(base64.b64decode(cluster_info["ca_data"]).decode("utf-8"))
-
-    client.Configuration.set_default(configuration)
+        # Configure the Kubernetes client
+        configuration = client.Configuration()
+        configuration.host = os.getenv("K8S_API_ENDPOINT")  # Set this to your cluster endpoint
+        configuration.verify_ssl = True
+        configuration.api_key["authorization"] = f"Bearer {token}"
+        
+        # Set the default configuration
+        client.Configuration.set_default(configuration)
+    except Exception as e:
+        logger.error(f"Error configuring Kubernetes client: {str(e)}")
+        raise
 
 def delete_pod(namespace, pod_name):
-    """Delete a specific pod in the given namespace."""
+    """
+    Delete a specific pod in the given namespace.
+    """
     try:
         v1 = client.CoreV1Api()
-        logger.info(f"Deleting pod {pod_name} in namespace {namespace}...")
-        v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
-        logger.info(f"Pod {pod_name} successfully deleted.")
+        logger.info(f"Attempting to delete pod: {pod_name} in namespace: {namespace}")
+        response = v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+        logger.info(f"Successfully deleted pod: {pod_name}. Response: {response}")
     except ApiException as e:
-        logger.error(f"Failed to delete pod {pod_name} in namespace {namespace}: {e}")
+        logger.error(f"Error deleting pod {pod_name} in namespace {namespace}: {e}")
         raise
 
 def lambda_handler(event, context):
-    """Main Lambda handler."""
+    """
+    Lambda handler function to process events and delete specified pods.
+    """
     try:
-        if not CLUSTER_NAME or not NAMESPACE:
-            raise ValueError("EKS_CLUSTER_NAME and K8S_NAMESPACE must be set as environment variables.")
+        cluster_name = os.getenv("EKS_CLUSTER_NAME")
+        if not cluster_name:
+            raise ValueError("EKS_CLUSTER_NAME environment variable is not set.")
 
         # Configure Kubernetes client
-        configure_k8s_client(CLUSTER_NAME)
+        configure_k8s_client(cluster_name)
 
-        # Parse event for pods to delete
+        # Fetch pod details from the event
         pods_to_delete = event.get("pods", [])
         if not pods_to_delete:
-            raise ValueError("No pods specified in the event payload.")
+            raise ValueError("No pods specified in the event for deletion.")
 
         for pod in pods_to_delete:
+            namespace = pod.get("namespace")
             pod_name = pod.get("name")
-            namespace = pod.get("namespace", NAMESPACE)
-            if not pod_name:
-                logger.warning("Pod name is missing in the payload. Skipping.")
+            if not namespace or not pod_name:
+                logger.warning(f"Invalid pod details: {pod}. Skipping.")
                 continue
+
             delete_pod(namespace, pod_name)
 
-        return {"status": "success", "message": "Pods deleted successfully."}
+        return {"status": "success", "message": "All specified pods deleted successfully."}
     except Exception as e:
-        logger.error(f"Error in Lambda function: {e}")
+        logger.error(f"Lambda function encountered an error: {str(e)}")
         return {"status": "error", "message": str(e)}
