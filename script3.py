@@ -3,6 +3,7 @@ import logging
 import boto3
 from kubernetes import client
 from kubernetes.client.rest import ApiException
+import base64  # Ensure base64 is imported
 
 # Set up logging
 logger = logging.getLogger()
