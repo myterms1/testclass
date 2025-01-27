@@ -1,0 +1,106 @@
+description: "Enrollment Developer role for USMG in DEV account"
+assignments:
+  O_AWS_USMG_DEV_ENROLLMENT_SUPPORT:
+    - usmg-dev
+
+aws_managed_policies:
+  - arn:aws:iam::aws:policy/AWSSupportAccess
+  - arn:aws:iam::aws:policy/ReadOnlyAccess
+  - arn:aws:iam::aws:policy/CloudWatchFullAccess
+  - arn:aws:iam::aws:policy/job-function/DatabaseAdministrator
+  - arn:aws:iam::aws:policy/job-function/SystemAdministrator
+  - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+  - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+  - arn:aws:iam::aws:policy/ServiceQuotasFullAccess
+  - arn:aws:iam::aws:policy/AmazonRDSFullAccess
+  - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+inline_policy:
+  Statement:
+    ### TfState
+    - Effect: Allow
+      Action:
+        - dynamodb:DeleteItem
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DescribeTable
+      Resource:
+        - arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cigna-tf-lock-${AWS::AccountId}
+
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+        - s3:GetBucket*
+      Resource:
+        - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}
+      Condition:
+        StringEquals:
+          s3:ResourceAccount:
+            - ${AWS::AccountId}
+
+    - Effect: Allow
+      Action:
+        - s3:GetObject*
+        - s3:PutObject*
+      Resource:
+        - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}/dmom-enrollment/*/*/*.tfstate
+        - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}/terraform/dmom-enrollment/*/*.tfstate
+      Condition:
+        StringEquals:
+          s3:ResourceAccount:
+            - ${AWS::AccountId}
+
+    ### SSM Params - coordinate between infra + app pipelines
+    - Effect: Allow
+      Action:
+        - ssm:DescribeParameters
+      Resource:
+        - arn:aws:ssm:*:${AWS::AccountId}:*
+
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter*
+      Resource:
+        - arn:aws:ssm:*:${AWS::AccountId}:parameter/Enterprise/*
+
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter*
+        - ssm:PutParameter
+        - ssm:DeleteParameter
+        - ssm:LabelParameterVersion
+        - ssm:RemoveTagsFromResource
+        - ssm:AddTagsToResource
+        - ssm:ListTagsForResource
+      Resource:
+        - arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dmom/ipm/*
+
+    ### Image table - need this for everything
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:*:${AWS::AccountId}:table/gov-solutions-dmom-*-ipm-image-tags
+
+    ### KMS
+    - Effect: Allow
+      Action:
+        - kms:Encrypt
+        - kms:Decrypt
+        - kms:GenerateDataKey*
+        - kms:DescribeKey
+      Resource:
+        - arn:aws:kms:*:${AWS::AccountId}:key/*
+      Condition:
+        ForAnyValue:StringLike:
+          kms:ResourceAliases:
+            - alias/gov-solutions-dmom-*-secrets
+
+    ### Secrets Manager
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+        - secretsmanager:PutSecretValue
+      Resource:
+        - arn:aws:secretsmanager:*:${AWS::AccountId}:secret:gov-solutions-dmom-*
