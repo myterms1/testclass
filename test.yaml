@@ -31,6 +31,12 @@ inline_policy:
       Action:
         - s3:ListBucket
         - s3:GetBucket*
+        - s3:PutObject*
+        - s3:ReplicateDelete
+        - s3:ReplicateObject
+        - s3:PutBucketVersioning
+        - s3:PutReplicationConfiguration
+        - s3:GetReplicationConfiguration
       Resource:
         - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}
       Condition:
@@ -42,9 +48,17 @@ inline_policy:
       Action:
         - s3:GetObject*
         - s3:PutObject*
+        - s3:ReplicateDelete
+        - s3:ReplicateObject
+        - s3:GetBucketVersioning
+        - s3:PutBucketVersioning
+        - s3:PutReplicationConfiguration
+        - s3:GetReplicationConfiguration
+        - s3:ListBucket
       Resource:
         - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}/dmom-enrollment/*/*/*.tfstate
         - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}/terraform/dmom-enrollment/*/*.tfstate
+        - arn:aws:s3:::cigna-tf-state-${AWS::AccountId}/terraform/dmom-enrollment-v2/*/*.tfstate
       Condition:
         StringEquals:
           s3:ResourceAccount:
@@ -74,6 +88,7 @@ inline_policy:
         - ssm:ListTagsForResource
       Resource:
         - arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/dmom/ipm/*
+        - arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gov-solutions-dmom-*
 
     ### Image table - need this for everything
     - Effect: Allow
@@ -82,6 +97,86 @@ inline_policy:
         - dynamodb:PutItem
       Resource:
         - arn:aws:dynamodb:*:${AWS::AccountId}:table/gov-solutions-dmom-*-ipm-image-tags
+        - arn:aws:dynamodb:*:${AWS::AccountId}:table/gov-solutions-dmom-*-pipeline-audit
+
+    ### random * stuff
+    - Effect: Allow
+      Action:
+        - ec2:Describe*
+        - elasticloadbalancing:Describe*
+        - application-autoscaling:DescribeScal*
+        - route53:ListHostedZones*
+        - servicediscovery:List*
+      Resource:
+        - "*"
+
+    ### CloudFront
+    - Effect: Allow
+      Action:
+        - cloudfront:CreateInvalidation
+        - cloudfront:Describe*
+        - cloudfront:Get*
+        - cloudfront:List*
+      Resource:
+        - "*"
+
+    ### CloudWatch
+    - Effect: Allow
+      Action:
+        - cloudwatch:DescribeAlarms
+        - cloudwatch:GetMetricData
+      Resource:
+        - "*"
+
+    - Effect: Allow
+      Action:
+        - cloudwatch:SetAlarmState
+      Resource:
+        - arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:gov-solutions-dmom-*
+
+    ### Codebuild
+    - Effect: Allow
+      Action:
+        - codebuild:BatchGet*
+        - codebuild:GetResourcePolicy
+        - codebuild:InvalidateProjectCache
+        - codebuild:StopBuild*
+      Resource:
+        - arn:aws:codebuild:*:${AWS::AccountId}:project/gov-solutions-dmom-*
+
+    - Effect: Allow
+      Action:
+        - codebuild:List*
+      Resource:
+        - "*"
+
+    ### ECS
+    - Effect: Allow
+      Action:
+        - ecs:Describe*
+        - ecs:Get*
+      Resource:
+        - arn:aws:ecs:us-east-1:${AWS::AccountId}:cluster/gov-solutions-dmom-*-ipm
+        - arn:aws:ecs:us-east-1:${AWS::AccountId}:service/gov-solutions-dmom-*-ipm/*
+        - arn:aws:ecs:us-east-1:${AWS::AccountId}:task/gov-solutions-dmom-*-ipm/*
+        - arn:aws:ecs:us-east-1:${AWS::AccountId}:container-instance/gov-solutions-dmom-*-ipm/*
+
+    - Effect: Allow
+      Action:
+        - ecs:DescribeClusters
+        - ecs:DescribeTaskDefinition
+        - ecs:List*
+      Resource:
+        - "*"
+
+    ### Glue -- to scope
+    - Effect: Allow
+      Action:
+        - glue:BatchGet*
+        - glue:Get*
+        - glue:List*
+      Resource:
+        - "*"
 
     ### KMS
     - Effect: Allow
@@ -90,17 +185,104 @@ inline_policy:
         - kms:Decrypt
         - kms:GenerateDataKey*
         - kms:DescribeKey
+        - kms:Get*
+        - kms:List*
       Resource:
         - arn:aws:kms:*:${AWS::AccountId}:key/*
       Condition:
         ForAnyValue:StringLike:
           kms:ResourceAliases:
+            - alias/gov-solutions-dmom-*-eaf
+            - alias/gov-solutions-dmom-*-finscan
+            - alias/gov-solutions-dmom-*-ipm*
+            - alias/gov-solutions-dmom-*-member-updates
+            - alias/gov-solutions-dmom-*-memberid-generator
+            - alias/gov-solutions-dmom-*-product-catalog*
+            - alias/gov-solutions-dmom-*-report-generator
             - alias/gov-solutions-dmom-*-secrets
+            - alias/gov-solutions-test-*
+            - alias/gov-solutions-*-glue_catalog-fhir
+            - alias/gov-solutions-*-glue_catalog-fhir-remote
+            - alias/gov-solutions-ccsera-catscan
 
-    ### Secrets Manager
     - Effect: Allow
       Action:
-        - secretsmanager:GetSecretValue
-        - secretsmanager:PutSecretValue
+        - kms:Encrypt
+        - kms:Decrypt
+        - kms:GenerateDataKey*
+        - kms:DescribeKey
+        - kms:Get*
+        - kms:List*
       Resource:
-        - arn:aws:secretsmanager:*:${AWS::AccountId}:secret:gov-solutions-dmom-*
+        - arn:aws:kms:*:${AWS::AccountId}:key/*
+      Condition:
+        StringEquals:
+          aws:ResourceTag/ServiceNowBA:
+            - BA19766
+
+    - Effect: Allow
+      Action:
+        - kms:ListKeys
+        - kms:ListAliases
+      Resource:
+        - "*"
+
+    ### Logs
+    - Effect: Allow
+      Action:
+        - logs:Describe*
+        - logs:Get*
+        - logs:List*
+        - logs:StartQuery
+        - logs:FilterLogEvents
+      Resource:
+        - arn:aws:logs:us-east-1:${AWS::AccountId}:log-group:/aws/ecs/gov-solutions-dmom-*
+
+    - Effect: Allow
+      Action:
+        - logs:DescribeQueries
+        - logs:DescribeLogGroups
+        - logs:DescribeAccountPolicies
+        - logs:DescribeDeliver*
+        - logs:DescribeQueryDefinitions
+        - logs:DescribeResourcePolicies
+        - logs:DescribeDestinations
+        - logs:DescribeExportTasks
+        - logs:GetLogDelivery
+        - logs:ListLogDeliveries
+        - logs:StopQuery
+        - logs:TestMetricFilter
+        - logs:StopLiveTail
+      Resource:
+        - "*"
+
+    ### RDS
+    - Effect: Allow
+      Action:
+        - rds:DownloadDBLogFilePortion
+        - rds:DownloadCompleteDBLogFile
+      Resource:
+        - arn:aws:rds:us-east-1:${AWS::AccountId}:db:gov-solutions-dmom-*-ipm-instance*
+        - arn:aws:rds:us-east-1:${AWS::AccountId}:cluster:gov-solutions-dmom-*-ipm-aurora
+
+    - Effect: Allow
+      Action:
+        - rds:Describe*
+        - rds:ListTagsForResource
+      Resource:
+        - "*"
+
+    - Effect: Allow
+      Action:
+        - rds-db:connect
+      Resource:
+        - arn:aws:rds-db:us-east-1:${AWS::AccountId}:dbuser:*/dmom_support
+        - arn:aws:rds-db:us-east-1:${AWS::AccountId}:dbuser:*/dmom_read
+
+    ### Quotas
+    - Effect: Allow
+      Action:
+        - servicequotas:RequestServiceQuotaIncrease
+      Resource:
+        - arn:aws:servicequotas:${AWS::Region}:${AWS::AccountId}:*/*
+        - arn:aws:servicequotas::${AWS::AccountId}:*/*
