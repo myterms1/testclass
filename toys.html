@@ -255,9 +255,16 @@ ls /opt/dynatrace/oneagent
 # Use Alpine Linux as the base image
 FROM alpine:3.18.4
 
+# Copy the certificate into the container
+COPY combined.pem /usr/local/share/ca-certificates/combined.pem
+
+# Add the certificate to the trusted CA certificates
+RUN chmod 644 /usr/local/share/ca-certificates/combined.pem && \
+    update-ca-certificates
+
 # Install dependencies
 RUN apk update && \
-    apk add ca-certificates wget unzip
+    apk add --no-cache ca-certificates wget unzip
 
 # Create the directory for OneAgent
 RUN mkdir -p /opt/dynatrace/oneagent
