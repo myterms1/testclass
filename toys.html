@@ -290,7 +290,7 @@ fi
 
 # Download and install the OneAgent
 ARCHIVE=$(mktemp) && \
-wget -O $ARCHIVE "$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?Api-Token=$DT_PAAS_TOKEN&$DT_ONEAGENT_OPTIONS" && \
+wget --ca-certificate=/usr/local/share/ca-certificates/combined.pem -O $ARCHIVE "$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?Api-Token=$DT_PAAS_TOKEN&$DT_ONEAGENT_OPTIONS" && \
 unzip -o -d /opt/dynatrace/oneagent $ARCHIVE && \
 rm -f $ARCHIVE
 
