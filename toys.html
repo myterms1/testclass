@@ -1,3 +1,251 @@
-JEFFTOYS
-JamesToyes
-Rename them all 
+resource "aws_ecs_task_definition" "main" {
+  family                   = var.config.name
+  execution_role_arn       = aws_iam_role.task_exec_role.arn
+  task_role_arn            = aws_iam_role.task_role.arn
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.service.cpu
+  memory                   = var.service.memory
+
+  volume {
+    name      = "oneagent"
+    host_path = ""
+  }
+
+  volume {
+    name      = "envoy"
+    host_path = ""
+  }
+
+  container_definitions = jsonencode([
+    {
+      name        = "main"
+      image       = "${aws_ecr_repository.main.repository_url}:${local.image_tags.main}"
+      essential   = true
+      volumesFrom = []
+      secrets     = var.service.secrets
+      dockerLabels = {
+        ImageTag = local.image_tags.main
+      }
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "task"
+        }
+      }
+
+      environment = flatten([var.service.env_vars, [
+        {
+          name  = "LD_PRELOAD"
+          value = "/opt/dynatrace/oneagent/agent/lib64/liboneagentproc.so"
+        },
+        {
+          name  = "ENVIRONMENT"
+          value = var.config.env
+        },
+        {
+          name  = "SERVICE_NAME"
+          value = var.config.name
+        }
+      ]])
+
+      mountPoints = [
+        {
+          sourceVolume  = "oneagent"
+          containerPath = "/opt/dynatrace/oneagent"
+          readOnly      = false
+        }
+      ]
+
+      dependsOn = [
+        {
+          containerName = "install-oneagent",
+          condition     = "COMPLETE"
+        }
+      ]
+    },
+    {
+      name           = "envoy"
+      image          = "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/appmesh/aws-appmesh-envoy:v1.27.3.0-prod"
+      cpu            = 100
+      memory         = 64
+      essential      = true
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+      tags           = {}
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "envoy"
+        }
+      }
+
+      entryPoint = [
+        "envoy",
+        "--config-path",
+        "/opt/envoy/config.yaml",
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "envoy"
+          containerPath = "/opt/envoy"
+          readOnly      = true
+        }
+      ]
+
+      portMappings = [
+        {
+          containerPort = 8443
+          hostPort      = 8443
+          protocol      = "tcp"
+        }
+      ]
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:8081/ready"]
+        startPeriod = 5
+        interval    = 30
+        retries     = 3
+        timeout     = 2
+      }
+
+      dependsOn = [
+        {
+          containerName = "install-certs",
+          condition     = "SUCCESS"
+        }
+      ]
+    },
+    {
+      name           = "install-oneagent"
+      image          = "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/docker/library/alpine:3.18.4"
+      cpu            = 50
+      memory         = 50
+      essential      = false
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+      tags           = {}
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "oneagent"
+        }
+      }
+
+      entryPoint = [
+        "/bin/sh",
+        "-c"
+      ]
+
+      command = [
+        "apk update && apk add ca-certificates wget unzip && ARCHIVE=$(mktemp) && wget -O $ARCHIVE \"$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?Api-Token=$DT_PAAS_TOKEN&$DT_ONEAGENT_OPTIONS\" && unzip -o -d /opt/dynatrace/oneagent $ARCHIVE && rm -f $ARCHIVE"
+      ]
+
+      environment = [
+        {
+          name  = "DT_ONEAGENT_OPTIONS"
+          value = "flavor=musl&include=all"
+        },
+        {
+          name  = "DT_API_URL"
+          value = var.config.dynatrace.api_url
+        },
+        {
+          name  = "DT_ONE_AGENT_VERSION"
+          value = var.config.dynatrace.one_agent_version
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "DT_PAAS_TOKEN"
+          valueFrom = var.config.remotes.cmn_secrets.secrets.dynatrace-api-credentials.arn
+        }
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "oneagent"
+          containerPath = "/opt/dynatrace/oneagent"
+          readOnly      = false
+        }
+      ]
+    },
+    {
+      name           = "install-certs"
+      image          = "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/aws-cli/aws-cli:2.15.40"
+      cpu            = 100
+      memory         = 256
+      essential      = false
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+      tags           = {}
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "cert-install"
+        }
+      }
+
+      entryPoint = [
+        "/bin/sh",
+        "-c"
+      ]
+
+      command = [
+        "cd /opt/envoy && aws s3 sync s3://${var.config.remotes.cmn_buckets.artifacts.bucket.id}/envoy/ . --include '*' && ls -la"
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "envoy"
+          containerPath = "/opt/envoy"
+          readOnly      = false
+        }
+      ]
+    }
+  ])
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  depends_on = [aws_cloudwatch_log_group.tasks]
+}
+
+resource "aws_cloudwatch_log_group" "tasks" {
+  name              = "/aws/ecs/${var.config.name}"
+  retention_in_days = 30
+}
+
+
+
+//////////////////////////////////////////////////////////////
+docker run -it --rm alpine:3.18.4 sh
+apk update && apk add ca-certificates wget unzip
+export DT_API_URL="https://dly04564.1ive.dyndrace.com/api"
+export DT_ONE_AGENT_VERSION="1.289.113.20240423-164025"
+export DT_PAAS_TOKEN="your-paas-token"
+ARCHIVE=$(mktemp) && \
+wget -O $ARCHIVE "$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?Api-Token=$DT_PAAS_TOKEN&$DT_ONEAGENT_OPTIONS" && \
+unzip -o -d /opt/dynatrace/oneagent $ARCHIVE && \
+rm -f $ARCHIVE
+
+
