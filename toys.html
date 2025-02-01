@@ -301,3 +301,7 @@ else
   echo "Error: OneAgent installation failed."
   exit 1
 fi
+
+
+/////////////////////
+wget --ca-certificate=/tmp/combined.pem -O /dev/null https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz
