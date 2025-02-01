@@ -253,16 +253,17 @@ ls /opt/dynatrace/oneagent
 
 /////////////////////////////////////////////////////////////////
 # Use Alpine Linux as the base image
+# Use Alpine Linux as the base image
 FROM alpine:3.18.4
 
-# Copy the certificate into the container
-COPY combined.pem /usr/local/share/ca-certificates/combined.pem
+# Copy the zscaler.pem certificate from your local machine to the container
+COPY zscaler.pem /tmp/zscaler.pem
 
-# Add the certificate to the trusted CA certificates
-RUN chmod 644 /usr/local/share/ca-certificates/combined.pem && \
-    update-ca-certificates
+# Append the zscaler.pem certificate to the trusted CA certificates
+RUN cat /tmp/zscaler.pem >> /etc/ssl/certs/ca-certificates.crt && \
+    rm /tmp/zscaler.pem
 
-# Install ca-certificates package and update the package index
+# Install dependencies
 RUN apk update && \
     apk add --no-cache ca-certificates wget unzip
 
