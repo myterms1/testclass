@@ -1,0 +1,25 @@
+jobs:
+  example-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up environment variables
+        run: |
+          echo "Invalid registry selected. Defaulting to GHCR."
+          echo "REGISTRY=${{ env.REGISTRY_GHCR }}" >> $GITHUB_ENV
+
+          # Extract the enrollment service name as an environment variable
+          ENROLLMENT_SERVICE_NAME="${{ inputs.enrollment_SERVICE_NAME }}"
+
+          if [[ "$ENROLLMENT_SERVICE_NAME" == gipm* ]]; then
+              echo "TAG_TABLE_NAME=usmg-${{ inputs.enrollment_environment }}-gipm-image-tags" >> $GITHUB_ENV
+              echo "ECS_CLUSTER_NAME=usmg-${{ inputs.enrollment_environment }}-gipm" >> $GITHUB_ENV
+          else
+              echo "TAG_TABLE_NAME=usmg-${{ inputs.enrollment_environment }}-ipm-image-tags" >> $GITHUB_ENV
+              echo "ECS_CLUSTER_NAME=usmg-${{ inputs.enrollment_environment }}-ipm" >> $GITHUB_ENV
+          fi
+
+          echo "IMAGE_NAME=usmg-${{ inputs.enrollment_environment }}-${{ env.NAME }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_ENV
+          echo "ECS_SERVICE_NAME=usmg-${{ inputs.enrollment_environment }}-${{ env.SERVICE_NAME }}" >> $GITHUB_ENV
+          echo "ECS_TASK_DEFINITION=usmg-${{ inputs.enrollment_environment }}-${{ env.SERVICE_NAME }}" >> $GITHUB_ENV
+          echo "ECS_CONTAINER_NAME=main" >> $GITHUB_ENV
