@@ -1,3 +1,75 @@
+data "aws_region" "current" {}
+
+module "config" {
+  source      = "../../_modules/config"
+  app         = "commons"
+  name_suffix = "bastion"
+  env         = var.env
+  remotes = {
+    cmn_base    = "usmg-state/${data.aws_region.current.name}/usmg-enrollment-infra/commons/base/${var.env}-tfstate"
+    cmn_buckets = "usmg-state/${data.aws_region.current.name}/usmg-enrollment-infra/commons/buckets/${var.env}-tfstate"
+    cmn_db      = "usmg-state/${data.aws_region.current.name}/usmg-enrollment-infra/commons/db/${var.env}-tfstate"
+  }
+  gen_assume_role = ["ec2"]
+}
+
+locals {
+  kms_key_map = {
+    "dev"  = "arn:aws:kms:us-east-1:058264473556:key/mrk-a47f08f70f71429b9527a8"
+    "int"  = "arn:aws:kms:us-east-1:382358134926:key/mrk-b021fc05bcb1474c82a9"
+    "prod" = "arn:aws:kms:us-east-1:382358134926:key/mrk-b021fc05bcb1474c82a9"
+  }
+}
+
+# Fetch AMI for Test and Prod environments
+data "aws_ram_resource_share" "ami_params_linux_test_prod" {
+  count          = var.env == "dev" ? 0 : 1
+  resource_owner = "OTHER-ACCOUNTS"
+  name           = "zilverton-golden-ami-cis-linux"
+}
+
+data "aws_ssm_parameter" "linux_ami_test_prod" {
+  count = var.env == "dev" ? 0 : 1
+  name = [
+    for resource in data.aws_ram_resource_share.ami_params_linux_test_prod[0].resource_arns : resource
+    if endswith(resource, "/golden-cis-linux")
+  ][0]
+}
+
+# Fetch AMI for Dev environment
+data "aws_ram_resource_share" "ami_params_linux_dev" {
+  count          = var.env == "dev" ? 1 : 0
+  resource_owner = "OTHER-ACCOUNTS"
+  name           = "zilverton-golden-ami-cis-linux-dev"
+}
+
+data "aws_ssm_parameter" "linux_ami_dev" {
+  count = var.env == "dev" ? 1 : 0
+  name = [
+    for resource in data.aws_ram_resource_share.ami_params_linux_dev[0].resource_arns : resource
+    if endswith(resource, "/dev/golden-cis-linux")
+  ][0]
+}
+
+# Select the correct AMI dynamically
+locals {
+  selected_ami = var.env == "dev" ? data.aws_ssm_parameter.linux_ami_dev[0].value : data.aws_ssm_parameter.linux_ami_test_prod[0].value
+}
+####################################################################################################################################
+module "bastion" {
+  source = "../../_modules/bastion"
+  config = module.config
+  bastion = {
+    tag = "Main"
+    ami = local.selected_ami  # ✅ Dynamically selected AMI
+  }
+  golden_ami_encryption_key_id = lookup(local.kms_key_map, var.env, local.kms_key_map["prod"])
+}
+
+
+
+
+
 ####################################################################################################################################
 variables.tf
 
