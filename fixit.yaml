@@ -1,0 +1,37 @@
+version: 0.2
+phases:
+  install:
+    on-failure: ABORT
+    runtime-versions:
+      java: corretto17
+    commands:
+      - |
+        # Determine the correct S3 bucket name dynamically
+        if [[ "$AWS_ACCOUNT_ID" == "123456789" && ( "$ENV" == "INT" || "$ENV" == "PVS" ) ]]; then
+          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
+        elif [[ "$AWS_ACCOUNT_ID" == "7777777777" && "$ENV" == "PROD" ]]; then
+          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
+        elif [[ "$AWS_ACCOUNT_ID" == "85172521" && "$ENV" == "DEV" ]]; then
+          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
+        else
+          echo "Error: Environment and account ID not recognized!"
+          exit 1
+        fi
+
+        echo "Using S3 bucket: $BUCKET_NAME"
+
+      - aws s3 cp s3://$BUCKET_NAME/liquibase_foundation/combined.pem /etc/pki/ca-trust/source/anchors/combined.pem
+      - update-ca-trust
+      - dnf install postgresql15 tar gzip findutils -y
+      - mkdir -p /opt/liquibase
+      - curl -sLo /opt/liquibase/liquibase.tar.gz https://github.com/liquibase/liquibase/releases/download/v4.25.0/liquibase-4.25.0.tar.gz
+      - tar -xf /opt/liquibase/liquibase.tar.gz -C /opt/liquibase && rm /opt/liquibase/liquibase.tar.gz
+  build:
+    on-failure: ABORT
+    commands:
+      - export PATH=$PATH:/opt/liquibase
+      - export PGUSER=$(echo $DB_CREDS | jq -r '.username')
+      - export PGPASSWORD=$(echo $DB_CREDS | jq -r '.password')
+      - psql --version
+      - liquibase --version
+      - ./scripts/run.sh $RUN_ARGS
