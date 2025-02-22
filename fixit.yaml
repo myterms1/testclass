@@ -5,7 +5,6 @@ phases:
     runtime-versions:
       java: corretto17
     commands:
-      - echo "🚀 Debugging Variables in buildspec.yml 🚀"
       - echo "AWS_ACCOUNT_ID: '$AWS_ACCOUNT_ID'"
       - echo "ENV: '$ENV'"
 
@@ -17,21 +16,20 @@ phases:
         echo "Normalized ENV: '$ENV_UPPER'"
         echo "Normalized AWS_ACCOUNT_ID: '$ACCOUNT_ID'"
 
-        # Determine the correct S3 bucket name dynamically
-        if [[ "$ACCOUNT_ID" == "84828583690" && ( "$ENV_UPPER" == "INT" || "$ENV_UPPER" == "PVS" ) ]]; then
-          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${ACCOUNT_ID}"
-        elif [[ "$ACCOUNT_ID" == "7777777777" && "$ENV_UPPER" == "PROD" ]]; then
-          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${ACCOUNT_ID}"
-        elif [[ "$ACCOUNT_ID" == "851725216779" && "$ENV_UPPER" == "DEV" ]]; then
-          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${ACCOUNT_ID}"
+        if [[ "$ACCOUNT_ID" == "xxxxxxx" && ( "$ENV_UPPER" == "WORK" ) ]]; then
+          BUCKET_NAME="yyyy-${ENV}-bucket-${ACCOUNT_ID}"
+        elif [[ "$ACCOUNT_ID" == "xxxxxxx" && "$ENV_UPPER" == "PROD" ]]; then
+          BUCKET_NAME="yyyy-${ENV}-bucket-${ACCOUNT_ID}"
+        elif [[ "$ACCOUNT_ID" == "xxxxxxx" && "$ENV_UPPER" == "OFFICE" ]]; then
+          BUCKET_NAME="yyyy-${ENV}-bucket-${ACCOUNT_ID}"
         else
-          echo "❌ ERROR: Environment ($ENV) and Account ID ($AWS_ACCOUNT_ID) not recognized!"
+          echo "ERROR: Environment ($ENV) and Account ID ($AWS_ACCOUNT_ID) not recognized!"
           exit 1
         fi
 
-        echo "✅ Using S3 bucket: $BUCKET_NAME"
+        echo "Using S3 bucket: $BUCKET_NAME"
 
-      - aws s3 cp s3://$BUCKET_NAME/liquibase_foundation/combined.pem /etc/pki/ca-trust/source/anchors/combined.pem
+      - aws s3 cp s3://$BUCKET_NAME/liquibase_foundation/certificate.pem /etc/pki/ca-trust/source/anchors/certificate.pem
       - update-ca-trust
       - dnf install postgresql15 tar gzip findutils -y
       - mkdir -p /opt/liquibase
@@ -46,20 +44,4 @@ phases:
       - psql --version
       - liquibase --version
       - ./scripts/run.sh $RUN_ARGS
-
-
-
-
-
-
-
-# Pass AWS_ACCOUNT_ID and ENV explicitly
-build=$(aws codebuild start-build \
-    --project-name "$project" \
-    --source-location-override "${bucket}/liquibase/${BUILD_NUMBER}.zip" \
-    --logs-config-override "cloudWatchLogs={status=ENABLED,groupName=${logs},streamName=${BUILD_NUMBER}}" \
-    --environment-variables-override \
-        "name=AWS_ACCOUNT_ID,value=$account,type=PLAINTEXT" \
-        "name=ENV,value=${ENV},type=PLAINTEXT" \
-        "name=RUN_ARGS,value=${COMMAND} ${CHANGESET},type=PLAINTEXT")
 
