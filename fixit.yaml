@@ -44,3 +44,19 @@ phases:
       - psql --version
       - liquibase --version
       - ./scripts/run.sh $RUN_ARGS
+
+
+
+
+
+
+# Pass AWS_ACCOUNT_ID and ENV explicitly
+build=$(aws codebuild start-build \
+    --project-name "$project" \
+    --source-location-override "${bucket}/liquibase/${BUILD_NUMBER}.zip" \
+    --logs-config-override "cloudWatchLogs={status=ENABLED,groupName=${logs},streamName=${BUILD_NUMBER}}" \
+    --environment-variables-override \
+        "name=AWS_ACCOUNT_ID,value=$account,type=PLAINTEXT" \
+        "name=ENV,value=${ENV},type=PLAINTEXT" \
+        "name=RUN_ARGS,value=${COMMAND} ${CHANGESET},type=PLAINTEXT")
+
