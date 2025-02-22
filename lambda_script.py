@@ -8,7 +8,7 @@ region = os.getenv('AWS_REGION')
 eks_cluster_name = os.getenv('EKS_CLUSTER_NAME')
 
 # Allowed namespaces for pod recycling
-allowed_namespaces = ['dev', 'sqlpad']
+allowed_namespaces = ['dev', 'office']
 
 # Boto3 client for EKS
 eks_client = boto3.client('eks', region_name=region)
