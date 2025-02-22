@@ -5,8 +5,17 @@ phases:
     runtime-versions:
       java: corretto17
     commands:
+      - echo "🚀 Debugging Variables in buildspec.yml 🚀"
+      - echo "AWS_ACCOUNT_ID: '$AWS_ACCOUNT_ID'"
+      - echo "ENV: '$ENV'"
+
       - |
         # Determine the correct S3 bucket name dynamically
+        if [[ -z "$AWS_ACCOUNT_ID" || -z "$ENV" ]]; then
+          echo "❌ ERROR: AWS_ACCOUNT_ID or ENV is not set!"
+          exit 1
+        fi
+
         if [[ "$AWS_ACCOUNT_ID" == "123456789" && ( "$ENV" == "INT" || "$ENV" == "PVS" ) ]]; then
           BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
         elif [[ "$AWS_ACCOUNT_ID" == "7777777777" && "$ENV" == "PROD" ]]; then
@@ -14,11 +23,11 @@ phases:
         elif [[ "$AWS_ACCOUNT_ID" == "85172521" && "$ENV" == "DEV" ]]; then
           BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
         else
-          echo "Error: Environment and account ID not recognized!"
+          echo "❌ ERROR: Environment ($ENV) and Account ID ($AWS_ACCOUNT_ID) not recognized!"
           exit 1
         fi
 
-        echo "Using S3 bucket: $BUCKET_NAME"
+        echo "✅ Using S3 bucket: $BUCKET_NAME"
 
       - aws s3 cp s3://$BUCKET_NAME/liquibase_foundation/combined.pem /etc/pki/ca-trust/source/anchors/combined.pem
       - update-ca-trust
