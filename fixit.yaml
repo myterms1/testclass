@@ -10,18 +10,20 @@ phases:
       - echo "ENV: '$ENV'"
 
       - |
-        # Determine the correct S3 bucket name dynamically
-        if [[ -z "$AWS_ACCOUNT_ID" || -z "$ENV" ]]; then
-          echo "❌ ERROR: AWS_ACCOUNT_ID or ENV is not set!"
-          exit 1
-        fi
+        # Normalize environment variable cases (convert to uppercase for safety)
+        ENV_UPPER=$(echo "$ENV" | tr '[:lower:]' '[:upper:]')
+        ACCOUNT_ID=$(echo "$AWS_ACCOUNT_ID" | sed 's/^0*//') # Remove leading zeros
 
-        if [[ "$AWS_ACCOUNT_ID" == "123456789" && ( "$ENV" == "INT" || "$ENV" == "PVS" ) ]]; then
-          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
-        elif [[ "$AWS_ACCOUNT_ID" == "7777777777" && "$ENV" == "PROD" ]]; then
-          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
-        elif [[ "$AWS_ACCOUNT_ID" == "85172521" && "$ENV" == "DEV" ]]; then
-          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${AWS_ACCOUNT_ID}"
+        echo "Normalized ENV: '$ENV_UPPER'"
+        echo "Normalized AWS_ACCOUNT_ID: '$ACCOUNT_ID'"
+
+        # Determine the correct S3 bucket name dynamically
+        if [[ "$ACCOUNT_ID" == "84828583690" && ( "$ENV_UPPER" == "INT" || "$ENV_UPPER" == "PVS" ) ]]; then
+          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${ACCOUNT_ID}"
+        elif [[ "$ACCOUNT_ID" == "7777777777" && "$ENV_UPPER" == "PROD" ]]; then
+          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${ACCOUNT_ID}"
+        elif [[ "$ACCOUNT_ID" == "851725216779" && "$ENV_UPPER" == "DEV" ]]; then
+          BUCKET_NAME="usmg-${ENV}-ipm-artifacts-bucket-${ACCOUNT_ID}"
         else
           echo "❌ ERROR: Environment ($ENV) and Account ID ($AWS_ACCOUNT_ID) not recognized!"
           exit 1
@@ -44,6 +46,7 @@ phases:
       - psql --version
       - liquibase --version
       - ./scripts/run.sh $RUN_ARGS
+
 
 
 
