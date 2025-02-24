@@ -1,0 +1,12 @@
+data "aws_ram_resource_share" "ami_params_linux" {
+  resource_owner = "OTHER-ACCOUNTS"
+  name = var.environment == "dev" || var.environment == "dev2" ? 
+         "zilverton-golden-ami-cis-linux-dev" : 
+         "zilverton-golden-ami-cis-linux"
+}
+
+data "aws_ssm_parameter" "linux_ami" {
+  name = length(data.aws_ram_resource_share.ami_params_linux.resource_arns) > 0 ? 
+    [for resource in data.aws_ram_resource_share.ami_params_linux.resource_arns : resource
+      if endswith(resource, var.environment == "dev" || var.environment == "dev2" ? "/dev/golden-cis-linux" : "/golden-cis-linux")][0] : null
+}
