@@ -104,3 +104,12 @@ resource "aws_s3_bucket_policy" "restrict_s3_to_vpc_endpoint" {
 }
 POLICY
 }
+
+########################################################################################################################################
+
+
+✅ Creates a Gateway VPC Endpoint for S3 (S3 does not support Interface endpoints).
+✅ Creates an S3 bucket if not already present.
+✅ Creates a Security Group for S3 VPC Endpoint to allow traffic only from ECS tasks.
+✅ Updates the ECS Security Group to allow only S3 traffic through the VPC Endpoint.
+✅ Applies a strict S3 Bucket Policy that blocks public access and allows only VPC Endpoint traffic.
