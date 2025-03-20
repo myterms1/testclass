@@ -1,3 +1,35 @@
+resource "null_resource" "install_kubectl" {
+  provisioner "local-exec" {
+    command = <<EOT
+      curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+      chmod +x kubectl
+      sudo mv kubectl /usr/local/bin/
+      kubectl version --client
+    EOT
+  }
+}
+
+resource "null_resource" "validate_kubectl" {
+  depends_on = [null_resource.install_kubectl]
+
+  provisioner "local-exec" {
+    command = <<EOT
+      if ! command -v kubectl &> /dev/null; then
+        echo "ERROR - could not execute kubectl version --client; you must have a kubectl binary installed!"
+        exit 1
+      else
+        kubectl version --client
+      fi
+    EOT
+  }
+}
+
+
+
+
+
+
+
 resource "null_resource" "validate_kubectl" {
   triggers = {
     id = timestamp()
