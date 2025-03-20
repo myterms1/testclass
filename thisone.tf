@@ -1,3 +1,29 @@
+resource "null_resource" "validate_kubectl" {
+  triggers = {
+    id = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+    if ! command -v kubectl &> /dev/null; then
+      echo "ERROR - could not execute kubectl version --client; you must have a kubectl binary installed!"
+      exit 1
+    fi
+    EOT
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 vpc_id = data.terraform_remote_state.vpc.outputs.vpc_id
 
 node_subnet_ids = flatten([for s in data.terraform_remote_state.vpc.outputs.additional_subnets : s.id])
