@@ -1,0 +1,5 @@
+RESTORE DATABASE [facetsdb] 
+FROM DISK = 's3://your-bucket/backup.bak'
+WITH NORECOVERY, 
+MOVE 'facetsdb_Data' TO 'D:\rdsdbdata\DATA\facetsdb.mdf',
+MOVE 'facetsdb_Log' TO 'D:\rdsdbdata\DATA\facetsdb.ldf';
