@@ -1,0 +1,13 @@
+import requests
+
+api_url = "https://product.dev.gateway.usmg-dev.aws.zilverton.com/v1"
+headers = {
+    "Content-Type": "application/json",
+    "Host": "product.dev.gateway.usmg-dev.aws.zilverton.com"  # Override Host Header
+}
+
+# Make API call while ignoring certificate errors
+response = requests.get(api_url, headers=headers, verify=False)
+
+print(response.status_code)
+print(response.text)
