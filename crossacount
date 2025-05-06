@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cross-account IAM role setup for DynamoDB access
+
+Parameters:
+  Env:
+    Type: String
+  IamPath:
+    Type: String
+
+Mappings:
+  EnvMap:
+    prod:
+      CrossAccount: "637423336322"
+    test:
+      CrossAccount: "111122223333"
+    dev:
+      CrossAccount: "444455556666"
+
+  GitBranchMap:
+    prod:
+      GitBranches:
+        - rel
+        - pfx
+        - main
+    test:
+      GitBranches:
+        - int
+        - trn
+        - pvs
+    dev:
+      GitBranches:
+        - dev
+        - cdv
+        - dst
+        - feature/*
+
+Resources:
+  CrossAccountValue:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/crossaccount/${Env}"
+      Type: String
+      Value: !FindInMap [EnvMap, !Ref Env, CrossAccount]
+
+  UsmgDynamoDbFeeNix:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UsmgDynamoDbFeeNix
+      Path: !Ref IamPath
+      MaxSessionDuration: 14400
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${CrossAccount}:role/maa-prov-AwsGlueFacetFalloutDynamoDbReadCrossAcctMedical"
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref UsmgDynamoDbFeeNixPolicy
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  UsmgDynamoDbFeeNixPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: UsmgDynamoDbFeeNixPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:Query
+            Resource: "*"
+
