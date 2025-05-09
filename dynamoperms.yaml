@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: [ZilvertonRJ]
+Parameters:
+  Env:
+    Type: String
+  IamPath:
+    Type: String
+
+Mappings:
+  EnvMap:
+    dev:
+      GitEnvironments:
+        - dev
+        - cdv
+        - dst
+      CrossAccount: "637423336322"
+  GitBranchMap:
+    dev:
+      GitBranches:
+        - dev
+        - cdv
+        - dst
+        - feature/*
+  AccountMap:
+    "851725216779":
+      UsmgDynamoDbReadCrossAcct: "arn:aws:iam::637423336322:role/maa-prov-AwsGlueFacetFalloutDynamoDbReadCrossAcctMedical"
+
+Resources:
+
+  UsmgDynamoDbFeeNix:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UsmgDynamoDbFeeNix
+      Path: /Enterprise/
+      MaxSessionDuration: 14400
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !FindInMap 
+                - AccountMap
+                - !Ref "AWS::AccountId"
+                - UsmgDynamoDbReadCrossAcct
+            Action: sts:AssumeRole
+            Condition:
+              StringLike:
+                aws:PrincipalArn: !FindInMap 
+                  - AccountMap
+                  - !Ref "AWS::AccountId"
+                  - UsmgDynamoDbReadCrossAcct
+      ManagedPolicyArns:
+        - !Ref UsmgDynamoDbFeeNixPolicy
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  UsmgDynamoDbFeeNixPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: "/Enterprise/"
+      ManagedPolicyName: UsmgDynamoDbFeeNixPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+            Resource:
+              - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+            Condition:
+              ForAnyValue:StringLike:
+                kms:ResourceAliases:
+                  - alias/usmg/aws/dev-dynamodb-kms-key
+          - Effect: Allow
+            Action:
+              - dynamodb:BatchWriteItem
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+              - dynamodb:ConditionCheckItem
+              - dynamodb:Describe*
+              - dynamodb:ListTables
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource:
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/usmg-auth-keyword-tbl-*
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/usmg-auth-fallout-keyword-*
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/usmg-mhk-auth-intake*
