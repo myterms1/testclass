@@ -1,0 +1,9 @@
+exceptions:
+  externalAccess:
+    - allow: 637423336322
+      targets:
+        - account: usmg-dev
+      explanation: "To allow the cross account role"
+  allowed_accounts_by_exception:
+    - id: "637423336322"
+      explanation: "To allow the allowed exception"
