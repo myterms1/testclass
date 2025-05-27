@@ -1,0 +1,19 @@
+fields @timestamp, interfaceId, srcAddr, dstAddr, srcPort, dstPort, action
+| filter interfaceId = "eni-xxxxxxxxxxxxxxxxx"
+| sort @timestamp desc
+| limit 100
+
+
+fields @timestamp, interfaceId, srcAddr, dstAddr, srcPort, dstPort, action
+| filter interfaceId = "eni-0abxxxxxxx"
+| sort @timestamp desc
+| limit 100
+
+
+
+fields @timestamp, interfaceId, srcAddr, dstAddr, dstPort, action
+| filter dstPort = 5432 and action = "ACCEPT"
+| sort @timestamp desc
+| limit 100
+
+
