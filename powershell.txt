@@ -1,0 +1,38 @@
+$psiFolder = "C:\Path\To\PSIFolder"
+$logFileName = "import_done.log"  # Example name; adjust as needed
+$expectedFileCount = 20  # or 30 depending on batch
+
+# Function to check if the log file says import is done
+function Check-ImportLog {
+    $logPath = Join-Path $psiFolder $logFileName
+    if (Test-Path $logPath) {
+        $logContent = Get-Content $logPath
+        if ($logContent -match "import done" -and $logContent -match "$expectedFileCount files") {
+            Write-Host "Import confirmed with $expectedFileCount files."
+            return $true
+        } else {
+            Write-Host "Log file found but does not confirm completion."
+        }
+    } else {
+        Write-Host "Waiting for log file: $logFileName"
+    }
+    return $false
+}
+
+# Wait for the log confirmation
+while (-not (Check-ImportLog)) {
+    Start-Sleep -Seconds 10  # Wait 10 seconds before checking again
+}
+
+# Once confirmed, transfer the files
+Write-Host "Starting file transfer..."
+$filesToTransfer = Get-ChildItem -Path $psiFolder -File | Where-Object { $_.Name -ne $logFileName }
+
+foreach ($file in $filesToTransfer) {
+    Write-Host "Transferring file: $($file.Name)"
+    # Insert your transfer command here (e.g., copy, move, scp, etc.)
+    # Example:
+    # Copy-Item $file.FullName -Destination "C:\Destination\Folder"
+}
+
+Write-Host "File transfer completed."
