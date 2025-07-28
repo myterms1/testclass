@@ -1,3 +1,72 @@
-JEFFTOYS
-JamesToyes
-Rename them all 
+allowed_listonly_s3_buckets = [
+  "registry.k8s.io"
+]
+
+allowed_getonly_s3_buckets = [
+  "prod-registry-k8s-io-us-east-1"
+]
+
+allowed_putonly_s3_buckets = [
+  "internal-artifacts-bucket"
+]
+
+
+locals {
+  listonly_bucket_arns = [
+    for bucket in var.allowed_listonly_s3_buckets : "arn:aws:s3:::${bucket}"
+  ]
+
+  listonly_object_arns = [
+    for bucket in var.allowed_listonly_s3_buckets : "arn:aws:s3:::${bucket}/*"
+  ]
+
+  getonly_bucket_arns = [
+    for bucket in var.allowed_getonly_s3_buckets : "arn:aws:s3:::${bucket}"
+  ]
+
+  getonly_object_arns = [
+    for bucket in var.allowed_getonly_s3_buckets : "arn:aws:s3:::${bucket}/*"
+  ]
+
+  putonly_bucket_arns = [
+    for bucket in var.allowed_putonly_s3_buckets : "arn:aws:s3:::${bucket}"
+  ]
+
+  putonly_object_arns = [
+    for bucket in var.allowed_putonly_s3_buckets : "arn:aws:s3:::${bucket}/*"
+  ]
+}
+
+data "aws_iam_policy_document" "s3_endpoint" {
+  statement {
+    sid     = "AllowListOnly"
+    actions = ["s3:ListBucket"]
+    resources = local.listonly_bucket_arns
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+
+  statement {
+    sid     = "AllowGetOnly"
+    actions = ["s3:GetObject"]
+    resources = local.getonly_object_arns
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+
+  statement {
+    sid     = "AllowPutOnly"
+    actions = ["s3:PutObject"]
+    resources = local.putonly_object_arns
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+}
+
+
