@@ -1,0 +1,46 @@
+{{ $clusterName := .Values.eksClusterName }}
+apiVersion: dynatrace.com/v1beta1
+kind: DynaKube
+metadata:
+  name: {{ $clusterName }}
+  {{- with .Values.dynaKube.annotations }}
+  annotations:
+    {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  apiUrl: https://{{ .Values.dynaKube.envId }}.live.dynatrace.com/api
+  networkZone: {{ $clusterName }}
+
+  applicationMonitoring:
+    containerInjection:
+      mode: "opt-in"
+    namespaceSelector:
+      matchLabels:
+        dynatrace.com/inject: "true"
+    {{- with .Values.dynaKube.oneAgent.args }}
+    args:
+      {{ toYaml . | nindent 6 }}
+    {{- end }}
+
+  metadataEnrichment:
+    enabled: true
+    namespaceSelector:
+      matchLabels:
+        dynatrace.com/inject: "true"
+
+  activeGate:
+    capabilities:
+      - routing
+      - kubernetes-monitoring
+      - dynatrace-api
+    customProperties:
+      value: |
+        [connectivity]
+        networkZone={{ $clusterName }}
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1.5Gi
