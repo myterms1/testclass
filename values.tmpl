@@ -1,0 +1,42 @@
+eksClusterName: ${eks_cluster_name}
+
+dynaKube:
+  # Optional annotations on the DynaKube CR (you had this set)
+  annotations:
+    feature.dynatrace.com/k8s-app-enabled: "true"
+
+  # Dynatrace tenant env id (e.g., diy04564)
+  envId: ${dynatrace_env_id}
+
+  # Name of the ConfigMap that contains your PEM bundle under key "certs"
+  trustedCAs: ca-bundle
+
+  # Metadata enrichment and its namespace selector
+  metadataEnrichment:
+    enabled: false
+    injectLabelValue: "true"          # dynatrace.com/inject=<value>
+
+  # ApplicationMonitoring injection namespace selector
+  injection:
+    labelValue: "true"                # dynatrace.com/inject=<value>
+
+  # Keep your existing host-property args (driven by Terraform tags)
+  oneAgent:
+    args:
+%{ for key, value in tags ~}
+      - --set-host-property=${key}=${value}
+%{ endfor ~}
+
+  # ActiveGate settings (match your working values)
+  activeGate:
+    capabilities:
+      - routing
+      - kubernetes-monitoring
+      - dynatrace-api
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1536Mi
