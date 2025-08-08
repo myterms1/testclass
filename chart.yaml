@@ -1,46 +1,51 @@
-{{ $clusterName := .Values.eksClusterName }}
-apiVersion: dynatrace.com/v1beta1
+{{- $clusterName := .Values.eksClusterName -}}
+apiVersion: dynatrace.com/v1beta4
 kind: DynaKube
 metadata:
   name: {{ $clusterName }}
+  namespace: {{ .Release.Namespace }}
   {{- with .Values.dynaKube.annotations }}
   annotations:
-    {{ toYaml . | nindent 4 }}
+{{ toYaml . | indent 4 }}
   {{- end }}
 spec:
+  # ---- API / network ----
   apiUrl: https://{{ .Values.dynaKube.envId }}.live.dynatrace.com/api
   networkZone: {{ $clusterName }}
 
-  applicationMonitoring:
-    containerInjection:
-      mode: "opt-in"
-    namespaceSelector:
-      matchLabels:
-        dynatrace.com/inject: "true"
-    {{- with .Values.dynaKube.oneAgent.args }}
-    args:
-      {{ toYaml . | nindent 6 }}
-    {{- end }}
+  # TLS trust for Dynatrace API
+  trustedCAs: {{ .Values.dynaKube.trustedCAs | default "ca-bundle" | quote }}
 
+  # ---- Metadata enrichment ----
   metadataEnrichment:
-    enabled: true
+    enabled: {{ .Values.dynaKube.metadataEnrichment.enabled | default false }}
     namespaceSelector:
       matchLabels:
-        dynatrace.com/inject: "true"
+        dynatrace.com/inject: {{ .Values.dynaKube.metadataEnrichment.injectLabelValue | default "true" | quote }}
 
+  # ---- Application monitoring (as your working CR shows: nested under oneAgent) ----
+  oneAgent:
+    applicationMonitoring:
+      namespaceSelector:
+        matchLabels:
+          dynatrace.com/inject: {{ .Values.dynaKube.injection.labelValue | default "true" | quote }}
+      {{- with .Values.dynaKube.oneAgent.args }}
+      args:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+
+  # ---- ActiveGate ----
   activeGate:
     capabilities:
-      - routing
-      - kubernetes-monitoring
-      - dynatrace-api
+{{ toYaml .Values.dynaKube.activeGate.capabilities | indent 6 }}
     customProperties:
       value: |
         [connectivity]
         networkZone={{ $clusterName }}
     resources:
       requests:
-        cpu: 500m
-        memory: 512Mi
+        cpu: {{ .Values.dynaKube.activeGate.resources.requests.cpu | default "500m" }}
+        memory: {{ .Values.dynaKube.activeGate.resources.requests.memory | default "512Mi" }}
       limits:
-        cpu: 1000m
-        memory: 1.5Gi
+        cpu: {{ .Values.dynaKube.activeGate.resources.limits.cpu | default "1000m" }}
+        memory: {{ .Values.dynaKube.activeGate.resources.limits.memory | default "1536Mi" }}
