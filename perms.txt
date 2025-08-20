@@ -1,0 +1,79 @@
+Version: "2012-10-17"
+Statement:
+  # 1) Bucket discovery
+  - Sid: ListBuckets
+    Effect: Allow
+    Action:
+      - s3:ListAllMyBuckets
+      - s3:GetBucketLocation
+    Resource: "*"
+
+  # 2) List & multipart list on target buckets (console uploads need these)
+  - Sid: ListOnTargetBuckets
+    Effect: Allow
+    Action:
+      - s3:ListBucket
+      - s3:ListBucketMultipartUploads
+    Resource:
+      - arn:aws:s3:::gbs-*-claims-replay-letter
+      - arn:aws:s3:::gbs-*-path-determiner-trigger-bucket
+
+  # 3) View object metadata (no content)
+  - Sid: ObjectMetadataOnly
+    Effect: Allow
+    Action:
+      - s3:GetObjectAttributes
+      - s3:GetObjectTagging
+      - s3:GetObjectAcl
+    Resource:
+      - arn:aws:s3:::gbs-*-claims-replay-letter/*
+      - arn:aws:s3:::gbs-*-path-determiner-trigger-bucket/*
+
+  # 4) Move files within the same bucket (copy + delete)
+  - Sid: MoveWithinBucket
+    Effect: Allow
+    Action:
+      - s3:CopyObject
+      - s3:DeleteObject
+    Resource:
+      - arn:aws:s3:::gbs-*-claims-replay-letter/*
+      - arn:aws:s3:::gbs-*-path-determiner-trigger-bucket/*
+
+  # 5) Allow uploading ONLY .csv files anywhere in the two buckets
+  - Sid: PutCsvOnly
+    Effect: Allow
+    Action:
+      - s3:PutObject
+    Resource:
+      - arn:aws:s3:::gbs-*-claims-replay-letter/*
+      - arn:aws:s3:::gbs-*-path-determiner-trigger-bucket/*
+    Condition:
+      StringLike:
+        s3:Key: "*.csv"
+
+  # 6) Guardrail: block access to buckets that are NOT in this account
+  - Sid: BlockCrossAccountBuckets
+    Effect: Deny
+    Action:
+      - s3:PutObject
+      - s3:DeleteObject
+      - s3:GetObject
+    Resource:
+      - arn:aws:s3:::gbs-*-claims-replay-letter/*
+      - arn:aws:s3:::gbs-*-path-determiner-trigger-bucket/*
+    Condition:
+      StringNotEquals:
+        s3:ResourceAccount: "${AWS:AccountId}"
+
+  # 7) Explicitly deny uploading anything that is NOT a .csv
+  #    (prevents future allows from granting non-CSV uploads)
+  - Sid: DenyNonCsvUploads
+    Effect: Deny
+    Action:
+      - s3:PutObject
+    Resource:
+      - arn:aws:s3:::gbs-*-claims-replay-letter/*
+      - arn:aws:s3:::gbs-*-path-determiner-trigger-bucket/*
+    Condition:
+      StringNotLikeIfExists:
+        s3:Key: "*.csv"
