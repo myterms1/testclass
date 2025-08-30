@@ -1,3 +1,53 @@
+resource "aws_ecr_repository" "main" {
+  name                 = local.ecr_name
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecs_service" "main" {
+  name                               = var.config.name
+  enable_execute_command             = true
+  cluster                            = local.cluster_name
+  task_definition                    = aws_ecs_task_definition.main.arn
+  desired_count                      = var.service.scaling.desired
+  launch_type                        = "FARGATE"
+  platform_version                   = "1.4.0"
+  force_new_deployment               = true
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+  health_check_grace_period_seconds  = length(local.target_groups) > 0 ? var.service.load_balancing.health_check_grace_period : 0
+  propagate_tags                     = "SERVICE"
+  depends_on                         = [aws_iam_role_policy_attachment.task_exec_role_managed]
+
+  network_configuration {
+    subnets          = var.config.vpc.subnets.nonroutable
+    assign_public_ip = false
+    security_groups = tolist(toset(flatten([
+      var.config.remotes.cmn_base.sgs.internet_egress,
+      var.service.security_groups,
+      length(local.target_groups) > 0 ? [var.config.remotes.cmn_base.sgs.alb_targets] : [],
+    ])))
+  }
+
+  dynamic "load_balancer" {
+    for_each = local.target_groups
+    content {
+      target_group_arn = aws_lb_target_group.service[load_balancer.key].arn
+      container_name   = "envoy"
+      container_port   = aws_lb_target_group.service[load_balancer.key].port
+    }
+  }
+
+  timeouts {
+    create = "5m"
+    update = "5m"
+    delete = "5m"
+  }
+}
+
 resource "aws_ecs_task_definition" "main" {
   family                   = var.config.name
   execution_role_arn       = aws_iam_role.task_exec_role.arn
@@ -7,137 +57,246 @@ resource "aws_ecs_task_definition" "main" {
   cpu                      = var.service.cpu
   memory                   = var.service.memory
 
-  # volumes
-  volume { name = "oneagent" host_path = "" }
-  volume { name = "envoy"    host_path = "" }
-  volume { name = "trust"    host_path = "" }  # <-- NEW shared cert volume
+  volume {
+    name      = "oneagent"
+    host_path = ""
+  }
+
+  volume {
+    name      = "envoy"
+    host_path = ""
+  }
+
+  # NEW: shared volume for the PEM
+  volume {
+    name      = "trust"
+    host_path = ""
+  }
 
   container_definitions = jsonencode([
     {
-      "name": "main",
-      "image": "${aws_ecr_repository.main.repository_url}:${local.image_tags.main}",
-      "essential": true,
-      "volumesFrom": [],
-      "secrets": ${jsonencode(var.service.secrets)},
-      "dockerLabels": { "ImageTag": "${local.image_tags.main}" },
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group":  "${aws_cloudwatch_log_group.tasks.name}",
-          "awslogs-region": "${var.config.caller.region}",
-          "awslogs-stream-prefix": "task"
-        }
-      },
-      "environment": ${jsonencode(flatten([
-        var.service.env_vars, [
-          { "name":"LD_PRELOAD",   "value":"/opt/dynatrace/oneagent/agent/lib64/liboneagentproc.so" },
-          { "name":"ENVIRONMENT",  "value":var.config.env },
-          { "name":"SERVICE_NAME", "value":var.config.name }
-        ]
-      ]))},
-      "mountPoints": [
-        { "sourceVolume": "oneagent", "containerPath": "/opt/dynatrace/oneagent", "readOnly": false }
-      ],
-      "dependsOn": [
-        { "containerName": "install-oneagent", "condition": "COMPLETE" }
-      ]
-    },
+      name        = "main"
+      image       = "${aws_ecr_repository.main.repository_url}:${local.image_tags.main}"
+      essential   = true
+      volumesFrom = []
+      secrets     = var.service.secrets
+      dockerLabels = {
+        ImageTag = local.image_tags.main
+      }
 
-    {
-      "name": "envoy",
-      "image": "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/appmesh/aws-appmesh-envoy:v1.27.3.0-prod",
-      "cpu": 100,
-      "memory": 64,
-      "essential": true,
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group":  "${aws_cloudwatch_log_group.tasks.name}",
-          "awslogs-region": "${var.config.caller.region}",
-          "awslogs-stream-prefix": "envoy"
-        }
-      },
-      "entryPoint": ["envoy","--config-path","/opt/envoy/config.yaml"],
-      "mountPoints": [
-        { "sourceVolume": "envoy", "containerPath": "/opt/envoy", "readOnly": true }
-      ],
-      "portMappings": [
-        { "containerPort": 8443, "hostPort": 8443, "protocol": "tcp" }
-      ],
-      "healthCheck": {
-        "command": ["CMD-SHELL","curl -f http://localhost:8081/ready"],
-        "startPeriod": 5, "interval": 30, "retries": 3, "timeout": 2
-      },
-      "dependsOn": [
-        { "containerName": "install-certs", "condition": "SUCCESS" }
-      ]
-    },
-
-    /* ---------- UPDATED: install-oneagent (Alpine + curl + trust volume) ---------- */
-    {
-      "name": "install-oneagent",
-      "image": "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/docker/library/alpine:3.18.4",
-      "cpu": 50,
-      "memory": 50,
-      "essential": false,
-      "entryPoint": ["/bin/sh","-c"],
-      "command": [
-        "apk add --no-cache curl ca-certificates unzip && " +
-        "ARCHIVE=$(mktemp) && " +
-        "curl --fail --show-error --cacert /trust/combined.pem -o \"$ARCHIVE\" " +
-        "\"$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?Api-Token=$DT_PAAS_TOKEN&$DT_ONEAGENT_OPTIONS\" && " +
-        "unzip -o -d /opt/dynatrace/oneagent \"$ARCHIVE\" && rm -f \"$ARCHIVE\""
-      ],
-      "environment": [
-        { "name":"DT_ONEAGENT_OPTIONS", "value":"flavor=musl&include=all" },
-        { "name":"DT_API_URL",          "value": ${jsonencode(var.config.dynatrace.api_url)} },
-        { "name":"DT_ONE_AGENT_VERSION","value": ${jsonencode(var.config.dynatrace.one_agent_version)} }
-      ],
-      "secrets": [
-        { "name":"DT_PAAS_TOKEN", "valueFrom":"${var.config.remotes.cmn_secrets.secrets.dynatrace-api-credentials.arn}" }
-      ],
-      "mountPoints": [
-        { "sourceVolume":"oneagent", "containerPath":"/opt/dynatrace/oneagent", "readOnly":false },
-        { "sourceVolume":"trust",    "containerPath":"/trust",                  "readOnly":true  }  # <-- use PEM here
-      ],
-      "readonlyRootFilesystem": false,  # needed for apk add
-      "logConfiguration": {
-        "logDriver":"awslogs",
-        "options":{
-          "awslogs-group":"${aws_cloudwatch_log_group.tasks.name}",
-          "awslogs-region":"${var.config.caller.region}",
-          "awslogs-stream-prefix":"oneagent"
-        }
-      ],
-      "dependsOn": [
-        { "containerName": "install-certs", "condition": "SUCCESS" }  # wait for PEM
-      ]
-    },
-
-    /* ---------- UPDATED: install-certs (copy PEM into /trust) ---------- */
-    {
-      "name": "install-certs",
-      "image": "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/aws-cli/aws-cli:2.15.40",
-      "cpu": 100,
-      "memory": 256,
-      "essential": false,
-      "entryPoint": ["/bin/sh","-c"],
-      "command": [
-        "cd /opt/envoy && aws s3 sync s3://${var.config.remotes.cmn_buckets.artifacts.bucket.id}/envoy/ . --include '*' && ls -la && " +
-        "mkdir -p /trust && aws s3 cp s3://${var.config.remotes.cmn_buckets.artifacts.bucket.id}/liquibase_foundation/combined.pem /trust/combined.pem && ls -l /trust"
-      ],
-      "mountPoints": [
-        { "sourceVolume":"envoy", "containerPath":"/opt/envoy", "readOnly":false },
-        { "sourceVolume":"trust", "containerPath":"/trust",     "readOnly":false }  # <-- writes PEM here
-      ],
-      "logConfiguration": {
-        "logDriver":"awslogs",
-        "options":{
-          "awslogs-group":"${aws_cloudwatch_log_group.tasks.name}",
-          "awslogs-region":"${var.config.caller.region}",
-          "awslogs-stream-prefix":"cert-install"
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "task"
         }
       }
+
+      environment = flatten([var.service.env_vars, [
+        {
+          name  = "LD_PRELOAD"
+          value = "/opt/dynatrace/oneagent/agent/lib64/liboneagentproc.so"
+        },
+        {
+          name  = "ENVIRONMENT"
+          value = var.config.env
+        },
+        {
+          name  = "SERVICE_NAME"
+          value = var.config.name
+        }
+      ]])
+
+      mountPoints = [
+        {
+          sourceVolume  = "oneagent"
+          containerPath = "/opt/dynatrace/oneagent"
+          readOnly      = false
+        }
+      ]
+
+      dependsOn = [
+        {
+          containerName = "install-oneagent"
+          condition     = "COMPLETE"
+        }
+      ]
+    },
+    {
+      name           = "envoy"
+      image          = "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/appmesh/aws-appmesh-envoy:v1.27.3.0-prod"
+      cpu            = 100
+      memory         = 64
+      essential      = true
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+      tags           = {}
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "envoy"
+        }
+      }
+
+      entryPoint = [
+        "envoy",
+        "--config-path",
+        "/opt/envoy/config.yaml",
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "envoy"
+          containerPath = "/opt/envoy"
+          readOnly      = true
+        }
+      ]
+
+      portMappings = [
+        {
+          containerPort = 8443
+          hostPort      = 8443
+          protocol      = "tcp"
+        }
+      ]
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:8081/ready"]
+        startPeriod = 5
+        interval    = 30
+        retries     = 3
+        timeout     = 2
+      }
+
+      dependsOn = [
+        {
+          containerName = "install-certs"
+          condition     = "SUCCESS"
+        }
+      ]
+    },
+    {
+      name           = "install-oneagent"
+      image          = "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/docker/library/alpine:3.18.4"
+      cpu            = 50
+      memory         = 50
+      essential      = false
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+      tags           = {}
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "oneagent"
+        }
+      }
+
+      entryPoint = [
+        "/bin/sh",
+        "-c"
+      ]
+
+      # UPDATED: install curl; use the PEM from /trust
+      command = [
+        "apk add --no-cache curl ca-certificates unzip && ARCHIVE=$(mktemp) && curl --fail --show-error --cacert /trust/combined.pem -o \"$ARCHIVE\" \"$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?Api-Token=$DT_PAAS_TOKEN&$DT_ONEAGENT_OPTIONS\" && unzip -o -d /opt/dynatrace/oneagent \"$ARCHIVE\" && rm -f \"$ARCHIVE\""
+      ]
+
+      environment = [
+        {
+          name  = "DT_ONEAGENT_OPTIONS"
+          value = "flavor=musl&include=all"
+        },
+        {
+          name  = "DT_API_URL",
+          value = var.config.dynatrace.api_url
+        },
+        {
+          name  = "DT_ONE_AGENT_VERSION",
+          value = var.config.dynatrace.one_agent_version
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "DT_PAAS_TOKEN"
+          valueFrom = var.config.remotes.cmn_secrets.secrets.dynatrace-api-credentials.arn
+        }
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "oneagent"
+          containerPath = "/opt/dynatrace/oneagent"
+          readOnly      = false
+        },
+        {
+          sourceVolume  = "trust"
+          containerPath = "/trust"
+          readOnly      = true
+        }
+      ]
+
+      # allow apk add for this one sidecar only
+      readonlyRootFilesystem = false
+
+      dependsOn = [
+        {
+          containerName = "install-certs"
+          condition     = "SUCCESS"
+        }
+      ]
+    },
+    {
+      name           = "install-certs"
+      image          = "${var.config.caller.account_id}.dkr.ecr.${var.config.caller.region}.amazonaws.com/ecr-public/aws-cli/aws-cli:2.15.40"
+      cpu            = 100
+      memory         = 256
+      essential      = false
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+      tags           = {}
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.tasks.name
+          awslogs-region        = var.config.caller.region
+          awslogs-stream-prefix = "cert-install"
+        }
+      }
+
+      entryPoint = [
+        "/bin/sh",
+        "-c"
+      ]
+
+      # UPDATED: also copy the PEM from S3 into /trust
+      command = [
+        "cd /opt/envoy && aws s3 sync s3://${var.config.remotes.cmn_buckets.artifacts.bucket.id}/envoy/ . --include '*' && ls -la && mkdir -p /trust && aws s3 cp s3://${var.config.remotes.cmn_buckets.artifacts.bucket.id}/liquibase_foundation/combined.pem /trust/combined.pem && ls -l /trust"
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "envoy"
+          containerPath = "/opt/envoy"
+          readOnly      = false
+        },
+        {
+          sourceVolume  = "trust"
+          containerPath = "/trust"
+          readOnly      = false
+        }
+      ]
     }
   ])
 
@@ -147,4 +306,9 @@ resource "aws_ecs_task_definition" "main" {
   }
 
   depends_on = [aws_cloudwatch_log_group.tasks]
+}
+
+resource "aws_cloudwatch_log_group" "tasks" {
+  name              = "/aws/ecs/${var.config.name}"
+  retention_in_days = 30
 }
