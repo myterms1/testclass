@@ -1,0 +1,47 @@
+####################################################################################
+Keep the OneAgent sidecar running longer
+Add a “sleep tail” at the end of your command so that the container doesn’t exit immediately after installing. For example:
+command = [
+  "apk add --no-cache curl ca-certificates unzip && " +
+  "ARCHIVE=$(mktemp) && " +
+  "curl --fail --show-error " +
+  "-H \"Authorization: Api-Token $DT_PAAS_TOKEN\" " +
+  "-o \"$ARCHIVE\" " +
+  "\"$DT_API_URL/v1/deployment/installer/agent/unix/paas/version/$DT_ONE_AGENT_VERSION?$DT_ONEAGENT_OPTIONS\" && " +
+  "unzip -o -d /opt/dynatrace/oneagent \"$ARCHIVE\" && rm -f \"$ARCHIVE\" && " +
+  "echo 'Installation finished. Sleeping for debug…' && sleep 600"
+]
+
+####################################################################################
+Exec into the ECS container (AWS console)
+Since you’re on ECS (Fargate/EC2), you’ll use ECS Exec via AWS Systems Manager.
+Enable ECS Exec on your task/service
+In AWS Console, go to ECS → Clusters → Your Cluster → Tasks.
+Select the running task with your container.
+Click Update service → under Configure service enable Execute command (if not already).
+This requires your task role and execution role to allow:
+{
+  "Effect": "Allow",
+  "Action": [
+    "ssm:StartSession",
+    "ssm:DescribeSessions",
+    "ssm:TerminateSession",
+    "ssmmessages:*"
+  ],
+  "Resource": "*"
+}
+
+
+####################################################################################
+From AWS Console
+In ECS → Tasks, pick your task.
+Click the container → Execute command → choose /bin/sh.
+You’ll get a terminal session into the container.
+aws ecs execute-command \
+  --cluster my-cluster \
+  --task <task-id> \
+  --container install-oneagent \
+  --command "/bin/sh" \
+  --interactive
+
+####################################################################################
