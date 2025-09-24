@@ -1,0 +1,118 @@
+{
+  "Sid": "AllowUploaderPutWithSpecificKmsKey",
+  "Effect": "Allow",
+  "Principal": { "AWS": "UPLOADER_ROLE_ARN" },
+  "Action": "s3:PutObject",
+  "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*",
+  "Condition": {
+    "StringEquals": {
+      "s3:x-amz-server-side-encryption": "aws:kms",
+      "s3:x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:us-east-1:KEY_ACCT_ID:key/KEY_ID"
+    }
+  }
+}
+
+1B) Allow your reader role(s) to read objects
+{
+  "Sid": "AllowReadersGetObject",
+  "Effect": "Allow",
+  "Principal": { "AWS": "READER_ROLE_ARN" },
+  "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+  "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*"
+}
+
+
+2) IAM role policies (identity policies)
+2A) Uploader role policy (in the uploader’s account)
+
+Where: IAM → Roles → your uploader role → Permissions → Add inline policy → JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { // put objects into your bucket
+      "Sid": "S3PutToPartnerBucket",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*"
+    },
+    { // use YOUR chosen CMK
+      "Sid": "KmsEncryptForPartnerBucket",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:GenerateDataKey*", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:us-east-1:KEY_ACCT_ID:key/KEY_ID"
+    }
+  ]
+}
+
+Uploader must send these headers on PUT:
+x-amz-server-side-encryption: aws:kms
+x-amz-server-side-encryption-aws-kms-key-id: arn:aws:kms:us-east-1:KEY_ACCT_ID:key/KEY_ID
+
+
+2B) Reader role policy (in your account)
+
+Where: IAM → Roles → your reader role → Permissions → Add inline policy → JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { // read objects
+      "Sid": "S3ReadPartnerObjects",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*"
+    },
+    { // decrypt with the CMK used to encrypt
+      "Sid": "KmsDecryptPartnerObjects",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:us-east-1:KEY_ACCT_ID:key/KEY_ID"
+    }
+  ]
+}
+3) KMS key policy (in the key’s account)
+
+Where: KMS → Customer managed keys → select key KEY_ID → Key policy → Edit → add these inside the "Statement": [ … ] array.
+
+This safely scopes key usage to S3 in us-east-1 and (optionally) to your bucket via encryption context.
+{
+  "Sid": "AllowUploaderEncryptViaS3",
+  "Effect": "Allow",
+  "Principal": { "AWS": "UPLOADER_ROLE_ARN" },
+  "Action": ["kms:Encrypt", "kms:GenerateDataKey*", "kms:DescribeKey"],
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" },
+    "StringLike": { "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*" }
+  }
+},
+{
+  "Sid": "AllowBucketReadersDecryptViaS3",
+  "Effect": "Allow",
+  "Principal": { "AWS": "READER_ROLE_ARN" },
+  "Action": ["kms:Decrypt", "kms:DescribeKey"],
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" },
+    "StringLike": { "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*" }
+  }
+}
+Strongly recommended (prevents future “owner/ACL” issues)
+
+Turn on Object Ownership → Bucket owner enforced (S3 console → bucket → Permissions → Object Ownership).
+Then (optionally) enforce KMS on new writes with a Deny unless SSE-KMS with your key statement in the bucket policy:
+{
+  "Sid": "DenyPutWithoutOurKmsKey",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": "s3:PutObject",
+  "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*",
+  "Condition": {
+    "StringNotEquals": {
+      "s3:x-amz-server-side-encryption": "aws:kms",
+      "s3:x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:us-east-1:KEY_ACCT_ID:key/KEY_ID"
+    }
+  }
+}
+
+
+
