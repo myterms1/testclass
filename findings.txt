@@ -1,0 +1,119 @@
+
+# Vendor Code Vulnerability Exception Report
+
+**Title:** Exception Request – Vendor JavaScript Libraries (DataTables, jqGrid, jQuery UI, jqModal, jqDnR, jQuery Form)
+**Requester:** [Your Name / Team]
+**Date:** 
+**Environment(s):** d, t, p
+**Tracking ID:** [Insert JIRA/ServiceNow Ticket]
+
+---
+
+## 1. Executive Summary
+
+GitHub Advanced Security (GHAS) identified multiple JavaScript vulnerabilities across vendor-supplied libraries bundled in our application. These include DataTables Buttons, jqGrid, jQuery UI, jqModal, jqDnR, and jQuery Form.
+
+We cannot modify these files directly without breaking vendor support or upgrade paths. We are requesting a time-bound exception, while engaging with the respective vendors/maintainers to provide upstream fixes.
+
+---
+
+## 2. Findings Overview
+
+| # | File                    | Package            | GHAS Rule                      | Severity | Risk Summary                                                             |
+| - | ----------------------- | ------------------ | ------------------------------ | -------- | ------------------------------------------------------------------------ |
+| 1 | `dataTables.buttons.js` | DataTables Buttons | `js/bad-html-filtering-regexp` | High     | Regex used to strip HTML does not handle multiline → potential XSS.      |
+| 2 | `buttons.colVis.js`     | DataTables Buttons | `js/bad-html-filtering-regexp` | High     | Same as above.                                                           |
+| 3 | `jquery.jqGrid.js`      | jqGrid             | `js/unsafe-jquery-plugin`      | Medium   | `$()` called with unvalidated input; jQuery may interpret as HTML → XSS. |
+| 4 | `jquery-ui.js`          | jQuery UI          | `js/unsafe-jquery-plugin`      | Medium   | Similar unsafe plugin usage.                                             |
+| 5 | `jquery.form.js`        | jQuery Form        | `js/unsafe-jquery-plugin`      | Medium   | Insecure plugin calls.                                                   |
+| 6 | `grid.base.js`          | jqGrid             | `js/unsafe-jquery-plugin`      | Medium   | Same issue.                                                              |
+| 7 | `jqDnR.js`              | jqDnR              | `js/unsafe-jquery-plugin`      | Medium   | Insecure drag/resize plugin patterns.                                    |
+| 8 | `jqModal.js`            | jqModal            | `js/unsafe-jquery-plugin`      | Medium   | `$.fn.jqmShow` uses `$()` with attacker-influenced inputs.               |
+| 9 | `web.config`            | Application Config | Missing X-Frame-Options header | High     | App may be embedded in iframes → clickjacking risk.                      |
+
+---
+
+## 3. Why We Cannot Remediate In-Place
+
+* All flagged files are **vendor libraries** (minified/bundled).
+* Local modifications would:
+
+  * Break vendor upgrade/support contracts.
+  * Be overwritten on each package upgrade.
+* No patched versions currently available.
+* Fixes must be delivered upstream (vendors/DataTables, jqGrid, jQuery maintainers).
+
+---
+
+## 4. Technical Impact & Exploitability
+
+* **Bad Regex in DataTables:** Could allow malicious multi-line comments/scripts to bypass stripping → XSS. Risk is low in our environment because inputs to DataTables come only from trusted backend APIs that already HTML-escape content.
+* **Unsafe jQuery Plugins:** Passing user-controlled strings to `$()` could cause arbitrary HTML insertion. Exploitability is limited since our app does not expose these plugin calls to unauthenticated/untrusted user input.
+* **Missing X-Frame-Options:** Clickjacking possible if application endpoints are embedded. However, the app already runs behind WAF and authentication.
+
+---
+
+## 5. Compensating Controls
+
+* **Content Security Policy (CSP):** Strict `script-src 'self'` policy prevents inline scripts.
+* **WAF Protections:** Block common XSS injection patterns.
+* **Server-Side Escaping:** All backend API responses are HTML-encoded before rendering.
+* **Authentication:** Affected components are not publicly exposed without login.
+* **Monitoring:** Frontend logs (Sentry/Datadog) capture suspicious behavior.
+
+---
+
+## 6. Mitigation & Roadmap
+
+**Immediate (in place):**
+
+* Validate and escape data server-side before rendering.
+* Monitor attempted exploit payloads.
+
+**Short-term (30 days):**
+
+* Submit issues/tickets to vendors:
+
+  * DataTables (SpryMedia)
+  * jqGrid (Guriddo)
+  * jQuery Form / jqModal / jqDnR maintainers
+* Track vendor responses.
+
+**Medium-term (60–90 days):**
+
+* Upgrade to patched vendor releases once available.
+* If no vendor patch, evaluate replacement or local wrapper sanitization.
+
+---
+
+## 7. Requested Exception
+
+* **Duration:** 90 days (2025-09-25 → 2025-12-25).
+* **Condition:** Renewal only if vendor patches are pending and compensating controls remain in place.
+* **Emergency Revocation:** If monitoring detects attempted exploitation, exception is revoked, and affected features disabled.
+
+---
+
+## 8. Testing & Verification
+
+* Payload tests (e.g., `<!--\n<script>alert(1)</script>\n-->`, `<img src=x onerror=alert(1)>`) are blocked or escaped.
+* CI/CD pipelines rerun GHAS scans; exception applies only to vendor files.
+
+---
+
+## 9. Contacts
+
+* Requester: [Your Name, email]
+* Technical Owner: [Team Name]
+* Security Reviewer: [Security Lead]
+* Business Approver: [Manager]
+
+---
+
+## 10. Attachments
+
+* GHAS screenshots of each finding.
+* File snippets with line numbers.
+* Vendor library version info.
+
+---
