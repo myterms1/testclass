@@ -1,43 +1,38 @@
-# syntax=docker/dockerfile:1
-
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
-# Make all RUN lines execute with PowerShell
+# Make RUN use PowerShell (WS2022 defaults to cmd.exe)
 SHELL ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
 
-# --- Zscaler cert bundle ---
+# Copy PEM
 COPY zscaler.pem C:\
 
-# Import Zscaler root + intermediate certs into LocalMachine\Root and \CA
-RUN $ErrorActionPreference='Stop'; `
-    $bundle = 'C:\zscaler.pem'; `
-    if (-not (Test-Path $bundle)) { throw "Missing $bundle"; } `
-    $stores = @('Root','CA'); `
-    $raw = Get-Content $bundle -Raw; `
-    $parts = $raw -split '-----END CERTIFICATE-----'; `
-    $i = 0; `
-    foreach ($p in $parts) { `
-      if ($p -match 'BEGIN CERTIFICATE') { `
-        $i++; `
-        $cer = Join-Path $env:TEMP ("zscaler-$i.cer"); `
-        Set-Content -Path $cer -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
-        foreach ($s in $stores) { certutil -addstore $s $cer | Out-Null } `
-      } `
+# <<< make sure there is a newline above this line ^ >>>
+
+# Your original logic, but executed directly (no Invoke-Expression)
+RUN Set-Location $env:TEMP; `
+    $certBundleFile = 'C:\zscaler.pem'; `
+    $certStores = @('Root','CA'); `
+    $certBundle = Get-Content $certBundleFile | Out-String; `
+    $certs = $certBundle -Split "(?<=-----END CERTIFICATE-----)" + [System.Environment]::NewLine; `
+    $i = 1; `
+    foreach ($cert in $certs) { `
+        $certFile = "zscaler_ca-$i.pem"; $i++; `
+        if ($cert) { `
+            $cert | Out-File -FilePath $certFile; `
+            foreach ($certStore in $certStores) { certutil -addstore $certStore $certFile } `
+        } `
     }
 
-# --- Dynatrace build args / envs ---
+# Dynatrace args/env (one per line; no backticks)
 ARG DT_API_URL
 ARG DT_ONEAGENT_OPTIONS
 ARG DT_PAAS_TOKEN
-
 ENV DT_API_URL=${DT_API_URL}
 ENV DT_ONEAGENT_OPTIONS=${DT_ONEAGENT_OPTIONS}
 ENV DT_PAAS_TOKEN=${DT_PAAS_TOKEN}
 
-# --- OneAgent install ---
 WORKDIR C:/OneAgentInstall
-COPY ./setup-oneagent.ps1 ./
+COPY .\setup-oneagent.ps1 .\
 RUN .\setup-oneagent.ps1
 
-# Drop privileges for runtime
 USER ContainerUser
