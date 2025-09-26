@@ -1,43 +1,42 @@
 # syntax=docker/dockerfile:1
 
-# Use Windows Server Core 2022 (change to ltsc2019 if you need WS2019)
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
-# Switch default RUN shell to PowerShell
-SHELL ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
+# Make all RUN lines execute with PowerShell
+SHELL ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
 
-# Copy Zscaler PEM bundle
+# --- Zscaler cert bundle ---
 COPY zscaler.pem C:\
 
-# Import Zscaler root + intermediate certs
-RUN $ErrorActionPreference = 'Stop'; `
+# Import Zscaler root + intermediate certs into LocalMachine\Root and \CA
+RUN $ErrorActionPreference='Stop'; `
     $bundle = 'C:\zscaler.pem'; `
+    if (-not (Test-Path $bundle)) { throw "Missing $bundle"; } `
     $stores = @('Root','CA'); `
     $raw = Get-Content $bundle -Raw; `
     $parts = $raw -split '-----END CERTIFICATE-----'; `
     $i = 0; `
     foreach ($p in $parts) { `
-        if ($p -match 'BEGIN CERTIFICATE') { `
-            $i++; `
-            $cer = Join-Path $env:TEMP ("zscaler-$i.cer"); `
-            Set-Content -Path $cer -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
-            foreach ($s in $stores) { certutil -addstore $s $cer | Out-Null } `
-        } `
+      if ($p -match 'BEGIN CERTIFICATE') { `
+        $i++; `
+        $cer = Join-Path $env:TEMP ("zscaler-$i.cer"); `
+        Set-Content -Path $cer -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
+        foreach ($s in $stores) { certutil -addstore $s $cer | Out-Null } `
+      } `
     }
 
-# Dynatrace args/env
+# --- Dynatrace build args / envs ---
 ARG DT_API_URL
 ARG DT_ONEAGENT_OPTIONS
 ARG DT_PAAS_TOKEN
 
-ENV DT_API_URL=${DT_API_URL} `
-    DT_ONEAGENT_OPTIONS=${DT_ONEAGENT_OPTIONS} `
-    DT_PAAS_TOKEN=${DT_PAAS_TOKEN}
+ENV DT_API_URL=${DT_API_URL}
+ENV DT_ONEAGENT_OPTIONS=${DT_ONEAGENT_OPTIONS}
+ENV DT_PAAS_TOKEN=${DT_PAAS_TOKEN}
 
-# Copy and run Dynatrace setup
+# --- OneAgent install ---
 WORKDIR C:/OneAgentInstall
 COPY ./setup-oneagent.ps1 ./
-
 RUN .\setup-oneagent.ps1
 
 # Drop privileges for runtime
