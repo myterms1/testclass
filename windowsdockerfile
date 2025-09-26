@@ -1,34 +1,31 @@
 # syntax=docker/dockerfile:1
-# escape=`
 
-# Base image (change to ltsc2019 if you need WS2019)
+# Use Windows Server Core 2022 (change to ltsc2019 if you need WS2019)
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
-# Make all RUN lines use PowerShell (WS2022 defaults to cmd.exe)
-SHELL ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
+# Switch default RUN shell to PowerShell
+SHELL ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
 
-# ---- Copy Zscaler PEM bundle ----
+# Copy Zscaler PEM bundle
 COPY zscaler.pem C:\
 
-# ---- Import Zscaler root + intermediate certs into LocalMachine stores ----
-# Splits the PEM bundle and imports each cert into Root and CA.
-RUN $ErrorActionPreference='Stop'; `
+# Import Zscaler root + intermediate certs
+RUN $ErrorActionPreference = 'Stop'; `
     $bundle = 'C:\zscaler.pem'; `
-    if (-not (Test-Path $bundle)) { throw "Missing $bundle"; } `
     $stores = @('Root','CA'); `
     $raw = Get-Content $bundle -Raw; `
     $parts = $raw -split '-----END CERTIFICATE-----'; `
     $i = 0; `
     foreach ($p in $parts) { `
-      if ($p -match 'BEGIN CERTIFICATE') { `
-        $i++; `
-        $cer = Join-Path $env:TEMP ("zscaler-$i.cer"); `
-        Set-Content -Path $cer -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
-        foreach ($s in $stores) { certutil -addstore $s $cer | Out-Null } `
-      } `
+        if ($p -match 'BEGIN CERTIFICATE') { `
+            $i++; `
+            $cer = Join-Path $env:TEMP ("zscaler-$i.cer"); `
+            Set-Content -Path $cer -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
+            foreach ($s in $stores) { certutil -addstore $s $cer | Out-Null } `
+        } `
     }
 
-# ---- Dynatrace env vars (pass values via --build-arg or set here) ----
+# Dynatrace args/env
 ARG DT_API_URL
 ARG DT_ONEAGENT_OPTIONS
 ARG DT_PAAS_TOKEN
@@ -37,17 +34,11 @@ ENV DT_API_URL=${DT_API_URL} `
     DT_ONEAGENT_OPTIONS=${DT_ONEAGENT_OPTIONS} `
     DT_PAAS_TOKEN=${DT_PAAS_TOKEN}
 
-# ---- OneAgent install ----
+# Copy and run Dynatrace setup
 WORKDIR C:/OneAgentInstall
 COPY ./setup-oneagent.ps1 ./
 
-# Run the installer while still elevated
 RUN .\setup-oneagent.ps1
 
 # Drop privileges for runtime
 USER ContainerUser
-
-# ---- (Optional) your app goes here ----
-# COPY ./app/ C:/app
-# WORKDIR C:/app
-# ENTRYPOINT ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-ExecutionPolicy","Bypass","-File",".\\start.ps1"]
