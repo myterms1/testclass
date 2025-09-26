@@ -1,13 +1,25 @@
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
-# Use PowerShell for RUN
+# Make RUN use PowerShell
 SHELL ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
 
-# Copy PEM (ensure there's a newline after this line!)
-COPY zscaler.pem C:\
+# Copy PEM (avoid trailing single backslash)
+COPY zscaler.pem C:\\
 
-# Import Zscaler certs into LocalMachine\Root and \CA (single-line RUN)
-RUN Set-Location $env:TEMP; $certBundleFile='C:\zscaler.pem'; $certStores=@('Root','CA'); $certBundle=Get-Content $certBundleFile -Raw; $parts=$certBundle -split '-----END CERTIFICATE-----'; $i=1; foreach($p in $parts){ if($p -match 'BEGIN CERTIFICATE'){ $out="zscaler_ca-$i.pem"; $i++; Set-Content -Path $out -Value ($p + '-----END CERTIFICATE-----') -NoNewline; foreach($store in $certStores){ certutil -addstore $store $out } } }
+# Import Zscaler certs into LocalMachine\Root and \CA
+RUN $ErrorActionPreference='Stop'; Set-Location $env:TEMP; `
+    $certBundleFile='C:\zscaler.pem'; `
+    $certStores=@('Root','CA'); `
+    $certBundle=Get-Content $certBundleFile -Raw; `
+    $parts=$certBundle -split '-----END CERTIFICATE-----\r?\n'; `
+    $i=1; `
+    foreach($p in $parts){ `
+      if($p -match 'BEGIN CERTIFICATE'){ `
+        $out=('zscaler_ca-{0}.pem' -f $i); $i++; `
+        Set-Content -Path $out -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
+        foreach($store in $certStores){ certutil -addstore $store $out | Out-Null } `
+      } `
+    }
 
 # Dynatrace args/env
 ARG DT_API_URL
