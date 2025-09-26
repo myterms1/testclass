@@ -1,3 +1,6 @@
+# escape=`
+# syntax=docker/dockerfile:1
+
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
 # Make RUN use PowerShell (WS2022 defaults to cmd.exe)
@@ -6,24 +9,22 @@ SHELL ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","
 # Copy PEM
 COPY zscaler.pem C:\
 
-# <<< make sure there is a newline above this line ^ >>>
-
-# Your original logic, but executed directly (no Invoke-Expression)
+# Import Zscaler certs (Root + CA)
 RUN Set-Location $env:TEMP; `
     $certBundleFile = 'C:\zscaler.pem'; `
     $certStores = @('Root','CA'); `
-    $certBundle = Get-Content $certBundleFile | Out-String; `
-    $certs = $certBundle -Split "(?<=-----END CERTIFICATE-----)" + [System.Environment]::NewLine; `
+    $certBundle = Get-Content $certBundleFile -Raw; `
+    $parts = $certBundle -split '-----END CERTIFICATE-----'; `
     $i = 1; `
-    foreach ($cert in $certs) { `
-        $certFile = "zscaler_ca-$i.pem"; $i++; `
-        if ($cert) { `
-            $cert | Out-File -FilePath $certFile; `
-            foreach ($certStore in $certStores) { certutil -addstore $certStore $certFile } `
-        } `
+    foreach ($p in $parts) { `
+      if ($p -match 'BEGIN CERTIFICATE') { `
+        $out = "zscaler_ca-$i.pem"; $i++; `
+        Set-Content -Path $out -Value ($p + '-----END CERTIFICATE-----') -NoNewline; `
+        foreach ($store in $certStores) { certutil -addstore $store $out } `
+      } `
     }
 
-# Dynatrace args/env (one per line; no backticks)
+# Dynatrace args/env
 ARG DT_API_URL
 ARG DT_ONEAGENT_OPTIONS
 ARG DT_PAAS_TOKEN
