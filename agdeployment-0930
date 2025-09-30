@@ -33,3 +33,50 @@ initOneAgent:
     Add-Content -Path $config -Value "server https://gbs-int2-elements-eks-blue-activate.observability.svc.cluster.local/communication"
     Add-Content -Path $config -Value "storage C:\OneAgent"
     Add-Content -Path $config -Value "loglevelcon NONE"
+========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  replicas: {{ .Values.replicaCount }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" . | nindent 8 }}
+    spec:
+      # 👇 insert initContainers here
+      {{- if .Values.initOneAgent.enabled }}
+      initContainers:
+        - name: install-oneagent
+          image: "{{ .Values.initOneAgent.image.registry }}/{{ .Values.initOneAgent.image.repository }}:{{ .Values.initOneAgent.image.tag }}"
+          imagePullPolicy: {{ .Values.initOneAgent.image.pullPolicy }}
+          command: ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
+          args:
+            - |-
+              Write-Host "Copying agent...";
+              Copy-Item -Path "{{ .Values.initOneAgent.copyFrom }}" -Destination "{{ .Values.initOneAgent.mountPath }}" -Recurse;
+              Write-Host "Configuring agent...";
+              $manifest = Get-Content "{{ .Values.initOneAgent.manifest }}" | ConvertFrom-Json;
+              New-Item -Path "{{ .Values.initOneAgent.confDir }}" -ItemType Directory -Force | Out-Null;
+              $config = Join-Path "{{ .Values.initOneAgent.confDir }}" "standalone.conf";
+              Set-Content -Path $config -Value ("tenant " + $manifest.tenantUUID);
+              Add-Content -Path $config -Value ("tenanttoken " + $manifest.tenantToken);
+              Add-Content -Path $config -Value "server {{ .Values.initOneAgent.server }}";
+              Add-Content -Path $config -Value "storage {{ .Values.initOneAgent.storage }}";
+              Add-Content -Path $config -Value "loglevelcon {{ .Values.initOneAgent.logLevelCon }}";
+          volumeMounts:
+            - name: oneagent
+              mountPath: {{ .Values.initOneAgent.mountPath | quote }}
+      {{- end }}
+
+      # your existing containers stay here
+      containers:
+        - name: {{ $name }}
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          ...
