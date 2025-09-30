@@ -1,0 +1,35 @@
+{{- if .Values.initOneAgent.enabled }}
+initContainers:
+  - name: install-oneagent
+    image: "{{- if .Values.initOneAgent.image.registry }}{{ .Values.initOneAgent.image.registry }}/{{ end }}{{ .Values.initOneAgent.image.repository }}:{{ .Values.initOneAgent.image.tag }}"
+    imagePullPolicy: {{ default "IfNotPresent" .Values.initOneAgent.image.pullPolicy }}
+    command: ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
+    args:
+      - |-
+        {{- tpl .Values.initOneAgent.script . | nindent 8 }}
+    volumeMounts:
+      - name: oneagent
+        mountPath: "C:\\OneAgent"
+{{- end }}
+
+==============================
+initOneAgent:
+  enabled: true
+  image:
+    registry: registry.cigna.com/cornerstone
+    repository: dynatrace-oneagent
+    tag: init-win-ltsc2022
+    pullPolicy: Always
+
+  script: |-
+    Write-Host "Copying agent...";
+    Copy-Item -Path "C:\OneAgentInstall\*" -Destination "C:\OneAgent" -Recurse
+    Write-Host "Configuring agent...";
+    $manifest = Get-Content "C:\OneAgent\manifest.json" | ConvertFrom-Json
+    New-Item -Path "C:\OneAgent\agent\conf" -ItemType Directory -Force | Out-Null
+    $config = "C:\OneAgent\agent\conf\standalone.conf"
+    Set-Content -Path $config -Value ("tenant " + $manifest.tenantUUID)
+    Add-Content -Path $config -Value ("tenanttoken " + $manifest.tenantToken)
+    Add-Content -Path $config -Value "server https://gbs-int2-elements-eks-blue-activate.observability.svc.cluster.local/communication"
+    Add-Content -Path $config -Value "storage C:\OneAgent"
+    Add-Content -Path $config -Value "loglevelcon NONE"
