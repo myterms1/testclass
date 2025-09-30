@@ -16,7 +16,7 @@ initContainers:
 initOneAgent:
   enabled: true
   image:
-    registry: registry.cigna.com/cornerstone
+    registry: registry.xyz.com/cornerstone
     repository: dynatrace-oneagent
     tag: init-win-ltsc2022
     pullPolicy: Always
