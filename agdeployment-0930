@@ -80,3 +80,10 @@ spec:
         - name: {{ $name }}
           image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           ...
+==========
+image: "{{- if .Values.initOneAgent.image.registry }}{{ .Values.initOneAgent.image.registry }}/{{ end }}{{ .Values.initOneAgent.image.repository }}:{{ .Values.initOneAgent.image.tag }}"
+
+
+====
+helm lint .
+helm template . | kubectl neat - | bat -l yaml
