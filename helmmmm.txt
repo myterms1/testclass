@@ -1,0 +1,23 @@
+      {{- $root := . }}
+      {{- with $root.Values.appConfig.initOneAgent }}
+      {{- if .enabled }}
+      initContainers:
+        - name: install-oneagent
+          image: "{{- if .image.registry }}{{ .image.registry }}/{{ end }}{{ .image.repository }}:{{ .image.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" .image.pullPolicy }}
+          command: ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
+          # We render your script as-is, then (optionally) sleep for the requested duration.
+          args:
+            - |-
+{{ tpl .script $root | nindent 14 }}
+              {{- if .sleepAfterSeconds }}
+              Write-Host "OneAgent init: sleeping for {{ .sleepAfterSeconds }} seconds...";
+              Start-Sleep -Seconds {{ .sleepAfterSeconds }}
+              {{- end }}
+          volumeMounts:
+            - name: oneagent
+              mountPath: {{ default "C:\\OneAgent" .mountPath | quote }}
+          # Optional: keep error text if something fails
+          terminationMessagePolicy: FallbackToLogsOnError
+      {{- end }}
+      {{- end }}
