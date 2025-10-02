@@ -1,3 +1,43 @@
+{{/* ========================= Dynatrace OneAgent helpers ========================= */}}
+
+{{/* Render full OneAgent image reference */}}
+{{- define "app.oneagent.image" -}}
+{{- $init := .Values.appConfig.initOneAgent -}}
+{{- if $init.image.registry }}{{ $init.image.registry }}/{{ end }}{{ $init.image.repository }}:{{ $init.image.tag }}
+{{- end -}}
+
+{{/* Script that configures OneAgent inside the init container. 
+     We use include+tpl so .Values.environment etc. can be templated. */}}
+{{- define "app.oneagent.script" -}}
+Write-Host "Copying agent...";
+Copy-Item -Path "C:\OneAgentInstall\*" -Destination {{ default "C:\OneAgent" .Values.appConfig.initOneAgent.mountPath | quote }} -Recurse
+
+Write-Host "Configuring agent...";
+$manifest = Get-Content "C:\OneAgent\manifest.json" | ConvertFrom-Json
+
+# Create conf dir/file (overwrite if exists)
+$confDir = "C:\OneAgent\agent\conf"
+New-Item -ItemType Directory -Path $confDir -Force | Out-Null
+$config = Join-Path $confDir "standalone.conf"
+
+Set-Content -Path $config -Value ("tenant " + $manifest.tenantUUID)
+Add-Content -Path $config -Value ("tenanttoken " + $manifest.tenantToken)
+Add-Content -Path $config -Value ("server https://usmg-{{ .Values.environment }}-elements-eks-blue-activegate.observability.svc.cluster.local/communication")
+Add-Content -Path $config -Value "storage C:\OneAgent"
+Add-Content -Path $config -Value "loglevelcon NONE"
+{{- end -}}
+
+{{/* Optional resources for the init container */}}
+{{- define "app.oneagent.resources" -}}
+{{- with .Values.appConfig.initOneAgent.resources }}
+{{ toYaml . }}
+{{- end -}}
+{{- end -}}
+
+
+
+
+/////////////////////////////////////////
 {{- $name := .Release.Name }}
 apiVersion: apps/v1
 kind: Deployment
@@ -9,19 +49,14 @@ spec:
   selector:
     matchLabels:
       {{- include "app.selectorLabels" . | nindent 6 }}
-
   {{- if not .Values.autoscaling.enabled }}
   {{- with .Values.replicaCount }}
   replicas: {{ . }}
   {{- end }}
   {{- end }}
-
   template:
     metadata:
-      # annotations:
-      #   dynatrace.com/inject: '{{ .Values.appConfig.enabledDynatrace }}'
-      #   metadata-enrichment.dynatrace.com/inject: '{{ .Values.appConfig.enabledDynatrace }}'
-      #   oneagent.dynatrace.com/inject: '{{ .Values.appConfig.enabledDynatrace }}'
+      # Keep your existing app annotations/labels here
       labels:
         {{- include "app.selectorLabels" . | nindent 8 }}
     spec:
@@ -29,28 +64,12 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-
       {{- if .Values.serviceAccount.create }}
       serviceAccountName: {{ include "app.serviceAccountName" . }}
       {{- end }}
-
-      # Merge pod securityContext so windowsOptions isn't overwritten later
       securityContext:
         windowsOptions:
           gmsaCredentialSpecName: {{ include "app.serviceAccountName" . }}
-        {{- with .Values.podSecurityContext }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-
-      {{- with .Values.topologySpreadConstraints }}
-      topologySpreadConstraints:
-        {{- range . }}
-        - {{- toYaml . | nindent 10 }}
-          labelSelector:
-            matchLabels:
-              {{- include "app.selectorLabels" $ | nindent 14 }}
-        {{- end }}
-      {{- end }}
 
       # ===== Dynatrace OneAgent init container =====
       {{- $root := . }}
@@ -58,18 +77,22 @@ spec:
       {{- if .enabled }}
       initContainers:
         - name: install-oneagent
-          image: "{{- if .image.registry }}{{ .image.registry }}/{{ end }}{{ .image.repository }}:{{ .image.tag }}"
+          image: "{{ include "app.oneagent.image" $root }}"
           imagePullPolicy: {{ default "IfNotPresent" .image.pullPolicy }}
           command: ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command"]
           args:
-            - |-
-{{ tpl .script $root | nindent 14 }}
+            - |
+              {{- /* render the script with environment templating */}}
+              {{ include "app.oneagent.script" $root | nindent 14 }}
           volumeMounts:
             - name: oneagent
               mountPath: {{ default "C:\\OneAgent" .mountPath | quote }}
+          {{- with (include "app.oneagent.resources" $root) }}
+          resources:
+            {{- . | nindent 12 }}
+          {{- end }}
       {{- end }}
       {{- end }}
-      # ============================================
 
       containers:
         - name: {{ $name }}
@@ -94,11 +117,21 @@ spec:
             {{- end }}
             {{- end }}
 
+          # ---- Extra env for TCS (Dynatrace, .NET, etc.) ----
+          {{- with .Values.tcs.env }}
+          env:
+            {{- range . }}
+            - name: {{ .name }}
+              value: {{ tpl .value $ | quote }}
+            {{- end }}
+          {{- end }}
+
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
 
+          # Mounts for app container (includes OneAgent emptyDir)
           volumeMounts:
             {{- range .Values.secrets }}
             {{- if eq .type "file" }}
@@ -110,9 +143,11 @@ spec:
             - name: {{ .name }}
               mountPath: {{ tpl .mountPath $ }}
             {{- end }}
+            - name: oneagent
+              mountPath: {{ default "C:\\OneAgent" .Values.appConfig.initOneAgent.mountPath | quote }}
 
       volumes:
-        # Shared workspace for the init container to drop OneAgent files
+        # emptyDir for OneAgent files dropped by the init container
         - name: oneagent
           emptyDir:
             sizeLimit: 1Gi
@@ -142,118 +177,91 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-      # ============================================
-
-      containers:
-        - name: {{ $name }}
-          image: '{{ tpl .Values.image.registry . }}/{{ tpl .Values.image.repository . }}:{{ .Values.image.tag | default .Chart.AppVersion }}'
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.service.port }}
-
-          {{- with .Values.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-
-          envFrom:
-            - configMapRef:
-                name: {{ $name }}
-            {{- range .Values.secrets }}
-            {{- if eq .type "map" }}
-            - secretRef:
-                name: {{ printf "%s-%s" $name ( tpl .nameSuffix $ ) }}
-            {{- end }}
-            {{- end }}
-
-          {{- with .Values.containerSecurityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-
-          volumeMounts:
-            {{- range .Values.secrets }}
-            {{- if eq .type "file" }}
-            - name: {{ tpl .nameSuffix $ }}
-              mountPath: {{ .mountPath }}
-            {{- end }}
-            {{- end }}
-            {{- range .Values.volumes }}
-            - name: {{ .name }}
-              mountPath: {{ tpl .mountPath $ }}
-            {{- end }}
-
-      volumes:
-        # Shared workspace for the init container to drop OneAgent files
-        - name: oneagent
-          emptyDir:
-            sizeLimit: 1Gi
-
-        {{- range .Values.secrets }}
-        {{- if eq .type "file" }}
-        - name: {{ tpl .nameSuffix $ }}
-          secret:
-            secretName: {{ printf "%s-%s" $name ( tpl .nameSuffix $ ) }}
-        {{- end }}
-        {{- end }}
-
-        {{- range .Values.volumes }}
-        - name: {{ .name }}
-          {{- with .hostPath }}
-          hostPath:
-            {{- tpl (toYaml .) $ | nindent 12 }}
-          {{- end }}
-          {{- with .pvc }}
-          persistentVolumeClaim:
-            claimName: {{ printf "%s-%s" $name .nameSuffix }}
-          {{- end }}
-        {{- end }}
-
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
+///////////////////////////////////////////
 
-#############
+# --- image for your main app ---
+image:
+  registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  repository: 'usmg/elements/{{ include "app.name" . }}-{{ .Values.component }}'
+  pullPolicy: Always
+  # tag: "6.00.003.000-v1.0.0"
 
+# service, autoscaling, resources etc. as you already have…
+
+# ---- Extra env that goes into the main app container (tcs-ui / tcs-api) ----
+tcs:
+  env:
+    # .NET Framework
+    - name: COR_ENABLE_PROFILING
+      value: "0x01"
+    - name: COR_PROFILER
+      value: "{B7038F67-52FC-4DA2-AB02-969B3C1EDA03}"
+    - name: COR_PROFILER_PATH_32
+      value: "C:\\oneagent\\agent\\lib\\oneagentloader.dll"
+    - name: COR_PROFILER_PATH_64
+      value: "C:\\oneagent\\agent\\lib64\\oneagentloader.dll"
+
+    # .NET Core
+    - name: CORECLR_ENABLE_PROFILING
+      value: "0x01"
+    - name: CORECLR_PROFILER
+      value: "{B7038F67-52FC-4DA2-AB02-969B3C1EDA03}"
+    - name: CORECLR_PROFILER_PATH_32
+      value: "C:\\oneagent\\agent\\lib\\oneagentloader.dll"
+    - name: CORECLR_PROFILER_PATH_64
+      value: "C:\\oneagent\\agent\\lib64\\oneagentloader.dll"
+
+    # Activate OneAgent
+    - name: DT_AGENTACTIVE
+      value: "true"
+
+# ---- Dynatrace OneAgent init container (Windows) ----
 appConfig:
-  # ... (your existing appConfig stays)
-
-  ## Dynatrace InitContainer
   initOneAgent:
     enabled: true
     image:
       registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
-      repository: dynatrace-oneagent
+      repository: usmg/commons/dynatrace-oneagent
       tag: init-win-ltsc2022
       pullPolicy: Always
+    # Where the init container drops agent files (also mounted in app container)
     mountPath: "C:\\OneAgent"
-    # PowerShell script rendered with tpl so you can use other chart values inside
-    script: |-
-      Write-Host "Copying agent..."
-      Copy-Item -Path "C:\OneAgentInstall\*" -Destination "C:\OneAgent" -Recurse
 
-      Write-Host "Configuring agent..."
-      $manifest = Get-Content "C:\OneAgent\manifest.json" | ConvertFrom-Json
+    # Optional: set CPU/memory for init
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
 
-      # Create conf file (overwrites if exists)
-      $confDir = "C:\OneAgent\agent\conf"
-      New-Item -ItemType Directory -Path $confDir -Force | Out-Null
-      $config = Join-Path $confDir "standalone.conf"
+    # The configuration script lives in helpers and is rendered via templating.
+    # If you ever want to inline/override it per release, uncomment below:
+    # script: |
+    #   (leave empty – we use helper "app.oneagent.script")
 
-      Set-Content -Path $config -Value ("tenant " + $manifest.tenantUUID)
-      Add-Content -Path $config -Value ("tenanttoken " + $manifest.tenantToken)
-      Add-Content -Path $config -Value ("server https://{{ .Values.appConfig.appName | default (include "app.name" .) }}-{{ .Values.component }}.elements-{{ .Values.environment }}-{{ .Values.deploymentId }}.usmg-{{ .Values.accountEnv }}.aws.zilverton.com/communication")
-      Add-Content -Path $config -Value "storage C:\OneAgent"
-      Add-Content -Path $config -Value "loglevelcon NONE"
+# --- volumes and secrets you already use ---
+secrets:
+  - nameSuffix: '{{ include "app.tlsSecretNameSuffix" . }}'
+    type: file
+    external: false
+    mountPath: C:\tls
+  - nameSuffix: '{{ include "app.authTlsSecretNameSuffix" . }}'
+    type: map
+    external: true
+    refreshInterval: 1m
+    secretsManagerPath: /usmg/{{ .Values.environment }}/elements/tcs/{{ .Values.component }}-auth-tls
 
+volumes:
+  - name: smb-fsx
+    hostPath:
+      path: Z:\usmg\{{ .Values.environment }}\tcs
+      type: Directory
+    mountPath: 'C:\share'
 
-################
-
-helm lint .
-
-helm template . to confirm initContainers renders whether or not topologySpreadConstraints is set.
-
-Ensure enabled is boolean (not quoted).
