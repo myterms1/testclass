@@ -1,0 +1,31 @@
+variable "superset_query_limits" {
+  type = object({
+    sql_max_row           = number
+    row_limit             = number
+    default_sqllab_limit  = number
+    display_max_row       = number
+  })
+  default = {
+    sql_max_row           = 750000
+    row_limit             = 750000
+    default_sqllab_limit  = 750000
+    display_max_row       = 10000
+  }
+}
+
+
+"configOverrides.query-limits" = <<-EOT
+  SQL_MAX_ROW = ${var.superset_query_limits.sql_max_row}
+  ROW_LIMIT = ${var.superset_query_limits.row_limit}
+  DEFAULT_SQLLAB_LIMIT = ${var.superset_query_limits.default_sqllab_limit}
+  DISPLAY_MAX_ROW = ${var.superset_query_limits.display_max_row}
+EOT
+
+
+######prod.tfvars#####
+superset_query_limits = {
+  sql_max_row           = 750000
+  row_limit             = 750000
+  default_sqllab_limit  = 750000
+  display_max_row       = 10000
+}
