@@ -1,0 +1,111 @@
+{{- if .Values.job.enabled }}
+{{- $appName := include "app.name" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $appName }}
+  labels:
+    {{- include "app.labels" $ | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.job.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" $ | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "app.serviceAccountName" . }}
+      {{- end }}
+
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      restartPolicy: {{ .Values.job.restartPolicy }}
+
+      containers:
+        - name: {{ $appName }}
+          image: "{{ tpl .Values.image.repository . }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          envFrom:
+            - configMapRef:
+                name: {{ $appName }}
+            {{- range .Values.secrets }}
+            {{- if eq .type "map" }}
+            - secretRef:
+                name: {{ printf "%s-%s" $appName ( tpl .nameSuffix $ ) }}
+            {{- end }}
+            {{- end }}
+
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          {{- if or .Values.volumes (include "app.fileSecretExists" .) }}
+          volumeMounts:
+            {{- range .Values.secrets }}
+            {{- if eq .type "file" }}
+            - name: {{ tpl .nameSuffix $ }}
+              mountPath: {{ .mountPath }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.volumes }}
+            - name: {{ .name }}
+              mountPath: {{ tpl .mountPath $ }}
+            {{- end }}
+          {{- end }}
+
+      {{- if or .Values.volumes (include "app.fileSecretExists" .) }}
+      volumes:
+        {{- range .Values.secrets }}
+        {{- if eq .type "file" }}
+        - name: {{ tpl .nameSuffix $ }}
+          secret:
+            secretName: {{ printf "%s-%s" $appName ( tpl .nameSuffix $ ) }}
+        {{- end }}
+        {{- end }}
+        {{- range .Values.volumes }}
+        - name: {{ .name }}
+          {{- with .hostPath }}
+          hostPath:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          {{- with .pvc }}
+          persistentVolumeClaim:
+            claimName: {{ printf "%s-%s" $appName .nameSuffix }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
