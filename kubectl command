@@ -1,0 +1,4 @@
+kubectl get pods -n fet \
+  | grep '^fet-manual-xmstmskeygen-' \
+  | awk '{print $1}' \
+  | xargs kubectl delete pod -n fet
