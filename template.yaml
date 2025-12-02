@@ -1,0 +1,32 @@
+      # ===== Dynatrace OneAgent init container =====
+      {{- with .Values.initContainer }}
+      {{- if .enabled }}
+      initContainers:
+        - name: {{ .name }}
+          image: '{{ tpl .image.registry $ }}/{{ tpl .image.repository $ }}:{{ .image.tag }}'
+          imagePullPolicy: {{ default "IfNotPresent" .image.pullPolicy }}
+
+          {{- with .command }}
+          command:
+            {{- range . }}
+            - {{ tpl . $ | quote }}
+            {{- end }}
+          {{- end }}
+
+          {{- with .args }}
+          args:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+
+          {{- with .volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          {{- with .resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- end }}
+      {{- end }}
+      # ============================================
