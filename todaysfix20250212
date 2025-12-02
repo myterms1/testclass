@@ -1,0 +1,32 @@
+  template:
+    metadata:
+      annotations:
+        {{- with $.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $deployment.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "app.labels" $ | nindent 8 }}
+        {{- include $selectorLabels $ | nindent 8 }}
+
+
+
+podAnnotations:
+  dynatrace.com/inject: "false"
+  metadata-enrichment.dynatrace.com/inject: "false"
+  oneagent.dynatrace.com/inject: "false"
+
+
+
+
+deployments:
+  timer:
+    podAnnotations:
+      # Only if you want something different for timer
+      dynatrace.com/inject: "false"
+  ui:
+    podAnnotations: {}
+
+
