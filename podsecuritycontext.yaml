@@ -1,0 +1,169 @@
+{{- $appName := include "app.name" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $appName }}
+  labels:
+    {{- include "app.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" $ | nindent 6 }}
+  {{- if not .Values.autoscaling.enabled }}
+  {{- with .Values.replicaCount }}
+  replicas: {{ . }}
+  {{- end }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        dynatrace.com/inject: '{{ .Values.appConfig.enabledDynatrace }}'
+        metadata-enrichment.dynatrace.com/inject: '{{ .Values.appConfig.enabledDynatrace }}'
+        oneagent.dynatrace.com/inject: '{{ .Values.appConfig.enabledDynatrace }}'
+      labels:
+        {{- include "app.selectorLabels" $ | nindent 8 }}
+    spec:
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "app.serviceAccountName" . }}
+      {{- end }}
+
+      {{- /* gMSA vs non-gMSA pod securityContext logic */ -}}
+      {{- if and .Values.serviceAccount.gmsa.enabled (not (.Values.podSecurityContext)) }}
+      securityContext:
+        windowsOptions:
+          gmsaCredentialSpecName: {{ include "app.serviceAccountName" . }}
+      {{- else }}
+        {{- with .Values.podSecurityContext }}
+      securityContext:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - {{- toYaml . | nindent 10 }}
+          labelSelector:
+            matchLabels:
+              {{- include "app.selectorLabels" $ | nindent 14 }}
+        {{- end }}
+      {{- end }}
+
+      # ===== Dynatrace OneAgent init container =====
+      {{- with .Values.initContainer }}
+      {{- if .enabled }}
+      initContainers:
+        - name: {{ .name }}
+          image: '{{ tpl .image.registry $ }}/{{ tpl .image.repository $ }}:{{ .image.tag }}'
+          imagePullPolicy: {{ default "IfNotPresent" .image.pullPolicy }}
+
+          {{- with .command }}
+          command:
+            {{- range . }}
+            - {{ tpl . $ | quote }}
+            {{- end }}
+          {{- end }}
+
+          {{- with .args }}
+          args:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+
+          {{- with .volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          {{- with .resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- end }}
+      {{- end }}
+      # ============================================
+
+      containers:
+        - name: {{ $appName }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          envFrom:
+            - configMapRef:
+                name: {{ $appName }}
+            {{- range .Values.secrets }}
+            {{- if eq .type "map" }}
+            - secretRef:
+                name: {{ printf "%s-%s" $appName ( tpl .nameSuffix $ ) }}
+            {{- end }}
+            {{- end }}
+
+          # ---- Dynatrace/FET env for fet ----
+          {{- with .Values.fet.env }}
+          env:
+            {{- range . }}
+            - name: {{ .name }}
+              value: {{ tpl .value $ | quote }}
+            {{- end }}
+          {{- end }}
+
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          # Mounts for fet container
+          volumeMounts:
+            {{- range .Values.secrets }}
+            {{- if eq .type "file" }}
+            - name: {{ tpl .nameSuffix $ }}
+              mountPath: {{ .mountPath | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.volumes }}
+            - name: {{ .name }}
+              mountPath: {{ tpl .mountPath $ }}
+            {{- end }}
+
+      # For Oneagent init container to drop OneAgent files
+      volumes:
+        {{- range .Values.secrets }}
+        {{- if eq .type "file" }}
+        - name: {{ tpl .nameSuffix $ }}
+          secret:
+            secretName: {{ printf "%s-%s" $appName ( tpl .nameSuffix $ ) }}
+        {{- end }}
+        {{- end }}
+
+        {{- range .Values.volumes }}
+        - name: {{ .name }}
+          {{- with .emptyDir }}
+          emptyDir:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          {{- with .hostPath }}
+          hostPath:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          {{- with .pvc }}
+          persistentVolumeClaim:
+            claimName: {{ printf "%s-%s" $appName .nameSuffix }}
+          {{- end }}
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
