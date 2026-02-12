@@ -1,0 +1,194 @@
+          args:
+            - '-c'
+            - |
+              cp -f "${JAVA_HOME}/lib/security/cacerts" /tmp/certs/cacerts
+              
+              # Process PEM files (may contain multiple certificates)
+              if [ "$(ls /tmp/secrets/ca-certs/*.pem 2>/dev/null)" ]; then
+                for f in /tmp/secrets/ca-certs/*.pem; do
+                  echo "Processing PEM bundle: ${f}"
+                  # Split multi-cert PEM into individual files
+                  csplit -f "${f}-cert-" -s -z "${f}" '/-----BEGIN CERTIFICATE-----/' '{*}'
+                  
+                  # Import each individual certificate
+                  for cert in ${f}-cert-*; do
+                    if [ -f "$cert" ]; then
+                      echo "Importing certificate: ${cert}"
+                      keytool -importcert -file "${cert}" \
+                        -alias "$(basename "${cert}")" \
+                        -keystore /tmp/certs/cacerts \
+                        -storepass changeit \
+                        -trustcacerts -noprompt
+                      rm -f "${cert}"
+                    fi
+                  done
+                done
+              fi
+              
+              # Process CRT files similarly
+              if [ "$(ls /tmp/secrets/ca-certs/*.crt 2>/dev/null)" ]; then
+                for f in /tmp/secrets/ca-certs/*.crt; do
+                  echo "Processing CRT bundle: ${f}"
+                  csplit -f "${f}-cert-" -s -z "${f}" '/-----BEGIN CERTIFICATE-----/' '{*}'
+                  
+                  for cert in ${f}-cert-*; do
+                    if [ -f "$cert" ]; then
+                      echo "Importing certificate: ${cert}"
+                      keytool -importcert -file "${cert}" \
+                        -alias "$(basename "${cert}")" \
+                        -keystore /tmp/certs/cacerts \
+                        -storepass changeit \
+                        -trustcacerts -noprompt
+                      rm -f "${cert}"
+                    fi
+                  done
+                done
+              fi
+
+================================
+
+          args:
+            - '-c'
+            - |
+              cp -f "${JAVA_HOME}/lib/security/cacerts" /tmp/certs/cacerts
+              
+              # Process PEM files with multiple certificates
+              if [ "$(ls /tmp/secrets/ca-certs/*.pem 2>/dev/null)" ]; then
+                for f in /tmp/secrets/ca-certs/*.pem; do
+                  echo "Processing PEM bundle: ${f}"
+                  
+                  # Split into individual certs using awk
+                  awk 'BEGIN {c=0;} 
+                       /-----BEGIN CERTIFICATE-----/ {
+                         c++; 
+                         file = "'${f}'-" c ".crt";
+                         print > file;
+                         next;
+                       }
+                       {
+                         if (c > 0) print >> file;
+                       }' "${f}"
+                  
+                  # Import each certificate
+                  for cert in ${f}-*.crt; do
+                    if [ -f "$cert" ]; then
+                      echo "Importing certificate: ${cert}"
+                      keytool -importcert -file "${cert}" \
+                        -alias "$(basename "${cert}")" \
+                        -keystore /tmp/certs/cacerts \
+                        -storepass changeit \
+                        -trustcacerts -noprompt
+                      rm -f "${cert}"
+                    fi
+                  done
+                done
+              fi
+============
+          args:
+            - '-c'
+            - |
+              cp -f "${JAVA_HOME}/lib/security/cacerts" /tmp/certs/cacerts
+              
+              # Process PEM files with multiple certificates
+              if [ "$(ls /tmp/secrets/ca-certs/*.pem 2>/dev/null)" ]; then
+                for f in /tmp/secrets/ca-certs/*.pem; do
+                  echo "Processing PEM bundle: ${f}"
+                  
+                  # Use csplit if available, otherwise use awk
+                  if command -v csplit >/dev/null 2>&1; then
+                    csplit -f "${f}-cert-" -s -z "${f}" '/-----BEGIN CERTIFICATE-----/' '{*}'
+                    cert_pattern="${f}-cert-*"
+                  else
+                    # Split and number certificates
+                    awk 'BEGIN {c=0} 
+                         /-----BEGIN CERTIFICATE-----/ {
+                           c++; 
+                           file = "'${f}'-" c ".crt";
+                           print > file;
+                           next;
+                         }
+                         {
+                           if (c > 0) print >> file;
+                         }' "${f}"
+                    cert_pattern="${f}-*.crt"
+                  fi
+                  
+                  # Import each certificate
+                  counter=1
+                  for cert in $cert_pattern; do
+                    if [ -f "$cert" ]; then
+                      echo "Importing certificate ${counter}: ${cert}"
+                      keytool -importcert -file "${cert}" \
+                        -alias "$(basename "${f}" .pem)-${counter}" \
+                        -keystore /tmp/certs/cacerts \
+                        -storepass changeit \
+                        -trustcacerts -noprompt
+                      rm -f "${cert}"
+                      counter=$((counter + 1))
+                    fi
+                  done
+                done
+              fi
+
+==========================
+
+G fix:
+==========
+initContainers:
+- name: ca-certs
+  image: public.ecr.aws/docker/library/eclipse-temurin:21-jdk-alpine
+  command:
+    - sh
+  args:
+    - '-c'
+    - |
+      # Copy original truststore
+      cp -f "${JAVA_HOME}/lib/security/cacerts" /tmp/certs/cacerts
+      
+      # Split multi-cert PEM file into individual certificates
+      echo "Splitting PEM bundle..."
+      csplit -z -f /tmp/certs/cert- "/tmp/secrets/ca-certs/ca-certs.pem" '/-----BEGIN CERTIFICATE-----/' '{*}'
+      
+      # Import each split certificate
+      for cert in /tmp/certs/cert-*; do
+        if [ -f "$cert" ]; then
+          echo "Importing: $cert"
+          keytool -importcert -trustcacerts -file "$cert" \
+            -alias "$(basename "$cert")" \
+            -keystore /tmp/certs/cacerts \
+            -storepass changeit -noprompt
+          rm -f "$cert"
+        fi
+      done
+      
+      # Also import any other .pem or .crt files (if they exist)
+      if [ -d "/tmp/secrets/ca-certs" ]; then
+        for f in /tmp/secrets/ca-certs/*.pem /tmp/secrets/ca-certs/*.crt; do
+          if [ -f "$f" ] && [ "$f" != "/tmp/secrets/ca-certs/ca-certs.pem" ]; then
+            echo "Processing additional cert: ${f}"
+            # Split if it's a bundle
+            csplit -z -f "${f}-cert-" "$f" '/-----BEGIN CERTIFICATE-----/' '{*}'
+            for cert in ${f}-cert-*; do
+              if [ -f "$cert" ]; then
+                keytool -importcert -trustcacerts -file "$cert" \
+                  -alias "$(basename "$cert")" \
+                  -keystore /tmp/certs/cacerts \
+                  -storepass changeit -noprompt
+                rm -f "$cert"
+              fi
+            done
+          fi
+        done
+      fi
+      
+      # Verify import
+      echo "Imported certificates:"
+      keytool -list -keystore /tmp/certs/cacerts -storepass changeit | grep -i "cert\|owner" | head -20
+  resources: {}
+  volumeMounts:
+  - name: shared-vo
+    mountPath: /tmp/certs
+  - name: ca-certs-vo
+    mountPath: /tmp/secrets/ca-certs
+
+              
