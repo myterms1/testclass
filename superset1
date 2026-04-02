@@ -1,0 +1,218 @@
+locals.tf:
+
+superset = {
+  enabled          = false
+  chart_repository = "http://apache.github.io/superset/"
+  chart_version    = "0.14.3"
+  namespace        = "superset"
+
+  create_requisites     = true
+  create_iam_requisites = false
+
+  values = merge(local.superset_extra_volume_values_flattened, {
+    # See https://github.com/apache/superset/blob/master/helm/superset/values.yaml for defaults
+
+    # Secrets - created by requisites chart
+    "envFromSecrets[0]" = "superset-admin"
+    "envFromSecrets[1]" = "superset-cache"
+    "envFromSecrets[2]" = "superset-metadata-db"
+
+    # Use custom ECR image
+    "image.repository" = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-superset"
+    "image.tag"        = "6.0.0-custom"
+    "image.pullPolicy" = "IfNotPresent"
+
+    # Extra env vars
+    "extraEnv.OIDC_ENABLED"          = "Y"
+    "extraEnv.SECURITY_APIS_ENABLED" = "N"
+
+    # Ingress
+    "ingress.enabled"          = "true"
+    "ingress.hosts[0]"         = "superset.${local.dns_suffixes[0]}"
+    "ingress.ingressClassName" = "nginx"
+
+    # Resources for init job
+    "init.resources.requests.cpu"    = "500m"
+    "init.resources.requests.memory" = "1Gi"
+    "init.resources.limits.cpu"      = "1"
+    "init.resources.limits.memory"   = "1Gi"
+
+    # Ensure init job replicas, if any, are spread out evenly
+    "init.topologySpreadConstraints[0].maxSkew"           = "1"
+    "init.topologySpreadConstraints[0].topologyKey"       = "init.topology.kubernetes.io/zone"
+    "init.topologySpreadConstraints[0].whenUnsatisfiable" = "ScheduleAnyway"
+    "init.topologySpreadConstraints[0].labelSelector.matchLabels.app" = "superset"
+    "init.topologySpreadConstraints[1].maxSkew"                       = "1"
+    "init.topologySpreadConstraints[1].topologyKey"                   = "kubernetes.io/hostname"
+    "init.topologySpreadConstraints[1].whenUnsatisfiable"             = "ScheduleAnyway"
+    "init.topologySpreadConstraints[1].labelSelector.matchLabels.app" = "superset"
+
+    # Node selector
+    "nodeSelector.kubernetes\\.io/os" = "linux"
+
+    # Disable DB and cache pods
+    "postgresql.enabled" = "false"
+    "redis.enabled"      = "false"
+
+    # Resources applicable to all pods.
+    "resources.requests.cpu"    = "200m"
+    "resources.requests.memory" = "2Gi"
+    "resources.limits.cpu"      = "1"
+    "resources.limits.memory"   = "2Gi"
+
+    # Ensure non-privileged user
+    "runAsUser" = "1000"
+
+    # Disable default env secret, which has undesirable values
+    "secretEnv.create" = "false"
+
+    # Config needed to use ElastiCache for cache
+    "supersetNode.connections.redis_password"    = "true"
+    "supersetNode.connections.redis_ssl.enabled" = "true"
+
+    # Disable telemetry data collection
+    "supersetNode.env.SCARF_ANALYTICS" = "false"
+
+    # HPA - Superset nodes
+    "supersetNode.replicas.enabled"                              = "false"
+    "supersetNode.autoscaling.enabled"                           = "true"
+    "supersetNode.autoscaling.minReplicas"                       = "2"
+    "supersetNode.autoscaling.maxReplicas"                       = "5"
+    "supersetNode.autoscaling.targetCPUUtilizationPercentage"    = "80"
+    "supersetNode.autoscaling.targetMemoryUtilizationPercentage" = "80"
+
+    # HPA - Superset workers
+    "supersetWorker.replicas.enabled"                              = "false"
+    "supersetWorker.autoscaling.enabled"                           = "true"
+    "supersetWorker.autoscaling.minReplicas"                       = "2"
+    "supersetWorker.autoscaling.maxReplicas"                       = "5"
+    "supersetWorker.autoscaling.targetCPUUtilizationPercentage"    = "80"
+    "supersetWorker.autoscaling.targetMemoryUtilizationPercentage" = "80"
+  })
+
+  values_template_params = {
+    app             = local.params.app
+    oidc_issuer_uri = "https://zilverton.oktapreview.com/oauth2/default"
+  }
+}
+
+================================================================================================================================================
+File 2: charts/local/superset/values.tpl.yaml
+Replace with this:
+
+bootstrapScript: |
+  #!/bin/bash
+  if [ ! -f ~/bootstrap ]; then
+    echo "Running Superset with uid {{ .Values.runAsUser }}" > ~/bootstrap
+  fi
+
+
+================================================================================================================================================
+locals.tf again — clean up values_template_params
+values_template_params = {
+  # Must have at least one param here to ensure values.tpl.yaml will be used
+  authlib_version             = "1.4.1"
+  psycopg2_binary_version     = "2.9.10"
+  pymssql_version             = "2.3.2"
+  sqlalchemy_bigquery_version = "1.12.0"
+
+  app             = local.params.app
+  oidc_issuer_uri = "https://zilverton.oktapreview.com/oauth2/default"
+}
+
+Since values.tpl.yaml will no longer use these package version variables, remove them.
+values_template_params = {
+  # Must have at least one param here to ensure values.tpl.yaml will be used
+  app             = local.params.app
+  oidc_issuer_uri = "https://zilverton.oktapreview.com/oauth2/default"
+}
+Important
+
+Do not remove values_template_params completely.
+Your module logic in charts/locals.tf says:
+
+use_values_template = length(var.helm_chart_values_template_params) > 0
+
+So if you make it empty, Terraform may stop rendering charts/local/superset/values.tpl.yaml.
+
+That means you still need at least one template parameter there.
+In your case app and oidc_issuer_uri are still used in that template, so keep them.
+
+================================================================================================================================================
+File 4: charts/addons/locals.tf — only if Kyverno blocks your ECR image
+
+Your repo has an image registry restriction allow-list.
+
+Current area:
+
+image_registry_restriction_allow_list = try(var.addon_config.image_registry_restriction_allow_list, "...")
+
+If your cluster has this policy enforced, and your new ECR image repo is not already included, the Superset pod may be denied.
+
+What to do
+
+Check whether your ECR registry path is already allowed.
+
+If not, add your ECR image pattern into that allow-list string.
+
+Example
+
+If your image is:
+
+123456789012.dkr.ecr.us-east-1.amazonaws.com/my-superset:6.0.0-custom
+
+hen add something like:
+
+| 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-superset:*
+
+inside the allow-list string.
+
+Example modified snippet
+image_registry_restriction_allow_list = try(
+  var.addon_config.image_registry_restriction_allow_list,
+  "602401143452.dkr.ecr.us-east-1.amazonaws.com/amazon-k8s-cni:* | ... | us-docker.pkg.dev/fairwinds-ops/oss/goldilocks:* | 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-superset:*"
+)
+
+Only do this if your admission policy blocks the image.
+================================================================================================================================================
+Files you do not need to change
+
+You do not need to modify these for the image switch:
+
+charts/main.tf
+charts/locals.tf
+charts/requisites/*
+charts/requisites/scripts/configure-superset.sh
+
+Why not:
+
+charts/main.tf already passes Helm values correctly
+charts/locals.tf already decides whether to use values.tpl.yaml
+requisites are about secrets and setup, not container image build
+
+So those files are fine as they are.
+
+================================================================================================================================================
+One more practical point
+
+You said your current Superset is v4.1.2 and you want v6.
+
+That means the image change is only one part. You also need to verify:
+
+your custom config in values.tpl.yaml
+init commands:
+superset db upgrade
+superset init
+any breaking changes in Superset 6 config/auth/plugins
+
+But for the Terraform repo changes, the 3 changes above are the right ones.
+
+If you want, next I can give you a ready-to-paste git diff patch for these files using placeholder ECR values.
+
+================================================================================================================================================
+
+================================================================================================================================================
+
+
+
+================================================================================================================================================
