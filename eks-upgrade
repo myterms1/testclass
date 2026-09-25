@@ -1,0 +1,155 @@
+Here's everything in the order you'll do it.
+
+## Phase 0: Preparation (once, before any upgrade)
+
+**Step 1. Confirm the golden AMIs exist.** Ask your AMI team, or check yourself:
+
+```bash
+aws ec2 describe-images --owners 382358134926 \
+  --filters "Name=name,Values=golden-usmg-al2023-aws-eks-1-35-*" --query 'Images[].Name'
+aws ec2 describe-images --owners 382358134926 \
+  --filters "Name=name,Values=golden-usmg-win2022-eks-1-35-*" --query 'Images[].Name'
+```
+
+If either returns empty, stop here until they're published.
+
+**Step 2. Remove the WinDSR lines** (shared repo `usmg-eks-addons`):
+
+1. Create a branch from tag `v15.7.0`.
+2. In `templates/kubeproxy-configmap-manifest.tpl.yaml`, delete these two lines:
+   ```yaml
+       featureGates:
+         WinDSR: true
+   ```
+3. Merge and create tag **`v15.7.1`**.
+4. In `usmg-elements/module/aws/eks-addons/addons.tf`, change both the blue and green `ref=` to `v15.7.1`.
+
+**Step 3. Upgrade Kyverno on 1.34, starting with `dev`.** In `usmg-elements/module/aws/eks-addons/env-config/us-east-1/dev.tfvars`:
+
+```hcl
+params = {
+  blue = {
+    helm_charts = {
+      kyverno = {
+        chart_version = "3.8.2"
+      }
+    }
+  }
+}
+```
+
+Apply `eks-addons` for `dev` (this also rolls out the Step 2 change), then check:
+
+```bash
+kubectl get pods -n kyverno                       # all Running
+kubectl rollout restart deploy <any-test-app> -n <ns>   # pods still start
+```
+
+If this works, add the same block to each environment's tfvars and apply. Kyverno 1.18 works on 1.34, 1.35 and 1.36, so this is a one-time change.
+
+## Phase 1: Upgrade to 1.35 (repeat per environment)
+
+Order: `cdv` → `dev` → `dst` → `int` → `pvs` → `trn` → `pfx` → `rel` → `prd`
+
+**Step 4. Back up the CoreDNS and kube-proxy settings:**
+
+```bash
+kubectl -n kube-system get cm coredns -o yaml > coredns-<env>.yaml
+kubectl -n kube-system get cm kube-proxy-config -o yaml > kube-proxy-<env>.yaml
+```
+
+**Step 5. Upgrade the control plane.** In `usmg-elements/module/aws/eks-cluster/env-config/us-east-1/<env>.tfvars`:
+
+```hcl
+params = {
+  blue = {
+    eks_version = "1.35"
+  }
+}
+```
+
+Plan `eks-cluster`. The only change should be `version` on the EKS cluster; if the plan shows a replacement, stop. Then apply (about 10–20 minutes). The control plane can't be downgraded after this step.
+
+**Step 6. Upgrade the nodes.** In `usmg-elements/module/aws/eks-nodes/env-config/us-east-1/<env>.tfvars`:
+
+```hcl
+params = {
+  blue = {
+    eks_version = "1.35"
+  }
+}
+```
+
+Plan and apply `eks-nodes`. This replaces the Linux and Windows nodes with the 1.35 AMIs and upgrades VPC CNI, CoreDNS, kube-proxy, EBS CSI and the other EKS add-ons automatically. Windows nodes take the longest.
+
+**Step 7. Update the autoscaler and restore CoreDNS, immediately after Step 6.** In `usmg-elements/module/aws/eks-addons/env-config/us-east-1/<env>.tfvars`, add `cluster-autoscaler` next to the existing `kyverno` entry:
+
+```hcl
+params = {
+  blue = {
+    helm_charts = {
+      kyverno = {
+        chart_version = "3.8.2"
+      }
+      cluster-autoscaler = {
+        chart_version = "9.59.0"
+        values = {
+          "image.tag" = "v1.35.2"
+        }
+      }
+    }
+  }
+}
+```
+
+Plan and apply `eks-addons`. This also puts back the CoreDNS AD settings that Step 6 likely reset.
+
+**Step 8. Plan `eks-apps`.** It should show no changes; apply only if needed.
+
+**Step 9. Validate:**
+
+```bash
+kubectl get nodes -o wide                            # all nodes v1.35.x
+kubectl get pods -A | grep -v -E "Running|Completed" # nothing stuck
+kubectl -n kube-system get cm coredns -o yaml | grep -A3 forward   # AD entries present
+kubectl get deploy -A -l app.kubernetes.io/name=aws-cluster-autoscaler -o jsonpath='{..image}'
+                                                     # shows v1.35.2
+```
+
+Also test AD name resolution from a Windows pod and open the TCS and Workflow URLs. If the CoreDNS AD entries are missing, re-apply `eks-addons`, or as a last resort `kubectl apply -f coredns-<env>.yaml`.
+
+## Phase 2: Upgrade to 1.36 (repeat per environment)
+
+Before starting, confirm the `eks-1-36` golden AMIs exist (Step 1 commands with `1-36`). Then repeat Steps 4–9 with these values:
+
+| File | Change |
+|---|---|
+| `eks-cluster/.../<env>.tfvars` | `eks_version = "1.36"` |
+| `eks-nodes/.../<env>.tfvars` | `eks_version = "1.36"` |
+| `eks-addons/.../<env>.tfvars` | `"image.tag" = "v1.36.1"` |
+
+Kyverno and the autoscaler `chart_version` stay the same.
+
+## Phase 3: Clean up (after all environments are on 1.36)
+
+**Step 10.** Move the settings into the `common.tfvars` files and remove them from the individual env files:
+
+| File | Set in `params.blue` (and `params.green`) |
+|---|---|
+| `eks-cluster/env-config/common.tfvars` | `eks_version = "1.36"` |
+| `eks-nodes/env-config/common.tfvars` | `eks_version = "1.36"` |
+| `eks-addons/env-config/common.tfvars` | `helm_charts` with `kyverno` and `cluster-autoscaler` entries |
+
+Run a plan in each environment afterwards; it should show no changes.
+
+**Summary of every file you'll touch:**
+
+| Repo | File | What |
+|---|---|---|
+| `usmg-eks-addons` | `templates/kubeproxy-configmap-manifest.tpl.yaml` | Delete 2 WinDSR lines, tag `v15.7.1` |
+| `usmg-elements` | `module/aws/eks-addons/addons.tf` | `ref=v15.7.1` (blue and green) |
+| `usmg-elements` | `module/aws/eks-addons/env-config/us-east-1/<env>.tfvars` | Kyverno `3.8.2`, autoscaler `9.59.0` with image tag |
+| `usmg-elements` | `module/aws/eks-cluster/env-config/us-east-1/<env>.tfvars` | `eks_version` |
+| `usmg-elements` | `module/aws/eks-nodes/env-config/us-east-1/<env>.tfvars` | `eks_version` |
+
+If any plan output looks unexpected while you're working, paste it here and I'll go through it with you.
