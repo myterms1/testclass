@@ -6,14 +6,14 @@ Here's everything in the order you'll do it.
 
 ```bash
 aws ec2 describe-images --owners 382358134926 \
-  --filters "Name=name,Values=golden-usmg-al2023-aws-eks-1-35-*" --query 'Images[].Name'
+  --filters "Name=name,Values=golden-gsm-al2023-aws-eks-1-35-*" --query 'Images[].Name'
 aws ec2 describe-images --owners 382358134926 \
-  --filters "Name=name,Values=golden-usmg-win2022-eks-1-35-*" --query 'Images[].Name'
+  --filters "Name=name,Values=golden-gsm-win2022-eks-1-35-*" --query 'Images[].Name'
 ```
 
 If either returns empty, stop here until they're published.
 
-**Step 2. Remove the WinDSR lines** (shared repo `usmg-eks-addons`):
+**Step 2. Remove the WinDSR lines** (shared repo `gsm-eks-addons`):
 
 1. Create a branch from tag `v15.7.0`.
 2. In `templates/kubeproxy-configmap-manifest.tpl.yaml`, delete these two lines:
@@ -22,9 +22,9 @@ If either returns empty, stop here until they're published.
          WinDSR: true
    ```
 3. Merge and create tag **`v15.7.1`**.
-4. In `usmg-elements/module/aws/eks-addons/addons.tf`, change both the blue and green `ref=` to `v15.7.1`.
+4. In `gsm-metal/module/aws/eks-addons/addons.tf`, change both the blue and green `ref=` to `v15.7.1`.
 
-**Step 3. Upgrade Kyverno on 1.34, starting with `dev`.** In `usmg-elements/module/aws/eks-addons/env-config/us-east-1/dev.tfvars`:
+**Step 3. Upgrade Kyverno on 1.34, starting with `dev`.** In `gsm-metal/module/aws/eks-addons/env-config/us-east-1/dev.tfvars`:
 
 ```hcl
 params = {
@@ -58,7 +58,7 @@ kubectl -n kube-system get cm coredns -o yaml > coredns-<env>.yaml
 kubectl -n kube-system get cm kube-proxy-config -o yaml > kube-proxy-<env>.yaml
 ```
 
-**Step 5. Upgrade the control plane.** In `usmg-elements/module/aws/eks-cluster/env-config/us-east-1/<env>.tfvars`:
+**Step 5. Upgrade the control plane.** In `gsm-metal/module/aws/eks-cluster/env-config/us-east-1/<env>.tfvars`:
 
 ```hcl
 params = {
@@ -70,7 +70,7 @@ params = {
 
 Plan `eks-cluster`. The only change should be `version` on the EKS cluster; if the plan shows a replacement, stop. Then apply (about 10–20 minutes). The control plane can't be downgraded after this step.
 
-**Step 6. Upgrade the nodes.** In `usmg-elements/module/aws/eks-nodes/env-config/us-east-1/<env>.tfvars`:
+**Step 6. Upgrade the nodes.** In `gsm-metal/module/aws/eks-nodes/env-config/us-east-1/<env>.tfvars`:
 
 ```hcl
 params = {
@@ -82,7 +82,7 @@ params = {
 
 Plan and apply `eks-nodes`. This replaces the Linux and Windows nodes with the 1.35 AMIs and upgrades VPC CNI, CoreDNS, kube-proxy, EBS CSI and the other EKS add-ons automatically. Windows nodes take the longest.
 
-**Step 7. Update the autoscaler and restore CoreDNS, immediately after Step 6.** In `usmg-elements/module/aws/eks-addons/env-config/us-east-1/<env>.tfvars`, add `cluster-autoscaler` next to the existing `kyverno` entry:
+**Step 7. Update the autoscaler and restore CoreDNS, immediately after Step 6.** In `gsm-metal/module/aws/eks-addons/env-config/us-east-1/<env>.tfvars`, add `cluster-autoscaler` next to the existing `kyverno` entry:
 
 ```hcl
 params = {
@@ -146,10 +146,10 @@ Run a plan in each environment afterwards; it should show no changes.
 
 | Repo | File | What |
 |---|---|---|
-| `usmg-eks-addons` | `templates/kubeproxy-configmap-manifest.tpl.yaml` | Delete 2 WinDSR lines, tag `v15.7.1` |
-| `usmg-elements` | `module/aws/eks-addons/addons.tf` | `ref=v15.7.1` (blue and green) |
-| `usmg-elements` | `module/aws/eks-addons/env-config/us-east-1/<env>.tfvars` | Kyverno `3.8.2`, autoscaler `9.59.0` with image tag |
-| `usmg-elements` | `module/aws/eks-cluster/env-config/us-east-1/<env>.tfvars` | `eks_version` |
-| `usmg-elements` | `module/aws/eks-nodes/env-config/us-east-1/<env>.tfvars` | `eks_version` |
+| `gsm-eks-addons` | `templates/kubeproxy-configmap-manifest.tpl.yaml` | Delete 2 WinDSR lines, tag `v15.7.1` |
+| `gsm-metal` | `module/aws/eks-addons/addons.tf` | `ref=v15.7.1` (blue and green) |
+| `gsm-metal` | `module/aws/eks-addons/env-config/us-east-1/<env>.tfvars` | Kyverno `3.8.2`, autoscaler `9.59.0` with image tag |
+| `gsm-metal` | `module/aws/eks-cluster/env-config/us-east-1/<env>.tfvars` | `eks_version` |
+| `gsm-metal` | `module/aws/eks-nodes/env-config/us-east-1/<env>.tfvars` | `eks_version` |
 
 If any plan output looks unexpected while you're working, paste it here and I'll go through it with you.
