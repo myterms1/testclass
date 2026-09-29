@@ -210,4 +210,57 @@ Until the controller reconciles properly, the next change to that Service could 
 
 Send me the Step 2 output, and I'll tell you exactly which override block to put in `dst.tfvars`.
 
+=================
+
+below is the fix:
+
+The UI works because the target group and nginx now agree: both have proxy protocol **off**. Your service output also shows why the controller got stuck. The Service now has port **61616** (the Facets pricer), but the NLB still has only the **443** listener. The controller never managed to add that port, so it never applied the other new settings either.
+
+The manual fix is fragile. The next time the controller does reconcile, it will apply the v20 settings, including the health check on **10254**, and that could break things again. Lock in what's working now in code.
+
+## Make it permanent (dst)
+
+In `usmg-elements/module/aws/eks-addons/env-config/us-east-1/dst.tfvars`, add these to the existing `ingress-nginx.values` block under **blue** (and under **green** too):
+
+```hcl
+      ingress-nginx = {
+        addon_config = {
+          dns_record_weight = "100"
+        }
+        values = {
+          # Remove Facets-only pricer port (batch/pricer-networx doesn't exist in Elements)
+          "tcp.61616"                       = null
+          "controller.service.ports.pricer" = null
+
+          # Keep the health check that works today (v20 default is 10254)
+          "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-healthcheck-port" = "80"
+
+          # Keep client IP preservation (Elements' previous behaviour; live value today)
+          "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-target-group-attributes" = "preserve_client_ip.enabled=true"
+        }
+      }
+```
+
+Setting a value to `null` removes it; terraform-helm v20 filters out null values before passing them to Helm. Proxy protocol stays **off**, as v20 sets it, which matches your manual fix.
+
+## What the plan and apply should do
+
+- **ingress-nginx** is updated in place, and the Service loses port 61616.
+- The controller can then reconcile cleanly. The target group should end up with proxy protocol **false**, preserve client IP **true**, and health check **HTTP 80 /healthz**, which is exactly what it has now. There should be no disruption.
+
+Check after the apply:
+```bash
+kubectl -n ingress-control get svc ingress-nginx-controller          # only 443/TCP
+aws elbv2 describe-target-group-attributes --target-group-arn $TG \
+  --query "Attributes[?Key=='proxy_protocol_v2.enabled' || Key=='preserve_client_ip.enabled']" --output table
+aws elbv2 describe-target-health --target-group-arn $TG \
+  --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output table
+kubectl -n ingress-control logs deploy/aws-load-balancer-controller --since=15m --tail=-1 | grep -iE "error|failed"
+```
+Both targets should be healthy, and the controller log should have no errors.
+
+## For the other environments
+
+Every Elements environment you move to terraform-helm v20 will hit this same problem. Once dst is confirmed, move this `values` block into `eks-addons/env-config/common.tfvars` (blue and green) so all environments get it, and add it to the runbook.
+
 
