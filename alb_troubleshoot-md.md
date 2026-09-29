@@ -138,3 +138,76 @@ This is really the question of whether Elements keeps the v20 (Facets) ingress b
 - **Keep the old Elements behavior:** override `use-proxy-protocol = "true"`, the proxy-protocol annotation `"*"`, `preserve_client_ip.enabled=true`, and health-check port `80` in `common.tfvars`. Apps keep seeing real client IPs.
 
 Send me the output of the two confirm commands, and the controller errors if there are any.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+=====
+That confirms it. The target group still has the **old v19 settings**:
+
+| Target group setting | Now | What the new chart expects |
+|---|---|---|
+| `proxy_protocol_v2.enabled` | **true** | false |
+| `preserve_client_ip.enabled` | **true** | false |
+| Health check port | **80** | 10254 |
+
+nginx was switched to `use-proxy-protocol = false`, but the NLB still adds a proxy-protocol header to every connection. nginx doesn't expect it, so it rejects the connections, and the UI fails. All three settings are stale, which means the **AWS Load Balancer Controller never applied the new service settings**.
+
+On your log check: with `-l`, kubectl only shows the **last 10 lines per pod**, so the count was too small to mean anything. Also, `--profile dev-admin` in the first line landed on `grep`, not kubectl. Use this:
+```bash
+kubectl -n ingress-control logs -l app.kubernetes.io/name=ingress-nginx -c controller \
+  --since=10m --tail=-1 | grep -ciE "broken header| 400 "
+```
+
+## Step 1: restore the UI now
+
+```bash
+aws elbv2 modify-target-group-attributes --target-group-arn $TG \
+  --attributes Key=proxy_protocol_v2.enabled,Value=false
+```
+Wait about 1 minute, then check:
+```bash
+aws elbv2 describe-target-health --target-group-arn $TG \
+  --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output table
+```
+Both targets should show **healthy**, and the UI should open. If they're still unhealthy, send me that output.
+
+You can undo this at any time by setting `Value=true`.
+
+## Step 2: find out why the controller is stuck
+
+```bash
+kubectl -n ingress-control get svc | grep ingress-nginx
+kubectl -n ingress-control describe svc <ingress-nginx-controller-svc> | sed -n '/Events/,$p'
+kubectl -n ingress-control logs deploy/aws-load-balancer-controller --since=6h --tail=-1 \
+  | grep -iE "error|failed" | tail -20
+```
+Look for `FailedDeployModel` or errors mentioning port **61616** / pricer. That's my main suspect: the Facets pricer port is being added to a Service in Elements, where `batch/pricer-networx` doesn't exist.
+
+## Step 3: make it permanent in code
+
+Until the controller reconciles properly, the next change to that Service could flip settings again. Once you've seen the error from Step 2, add the Elements overrides:
+
+- Remove the pricer port:
+  ```hcl
+  "tcp.61616"                       = null
+  "controller.service.ports.pricer" = null
+  ```
+- Then choose one ingress mode for Elements:
+  - **v20 mode:** no proxy protocol, client IP not preserved, health check on 10254. Needs TCP 10254 open on the pod security group.
+  - **Old Elements mode:** `use-proxy-protocol = "true"`, proxy-protocol annotation `"*"`, `preserve_client_ip.enabled=true`, health check port 80.
+
+Send me the Step 2 output, and I'll tell you exactly which override block to put in `dst.tfvars`.
+
+
