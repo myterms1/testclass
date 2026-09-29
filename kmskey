@@ -3,7 +3,7 @@
   "Effect": "Allow",
   "Principal": { "AWS": "UPLOADER_ROLE_ARN" },
   "Action": "s3:PutObject",
-  "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*",
+  "Resource": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*",
   "Condition": {
     "StringEquals": {
       "s3:x-amz-server-side-encryption": "aws:kms",
@@ -18,7 +18,7 @@
   "Effect": "Allow",
   "Principal": { "AWS": "READER_ROLE_ARN" },
   "Action": ["s3:GetObject", "s3:GetObjectVersion"],
-  "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*"
+  "Resource": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*"
 }
 
 
@@ -33,7 +33,7 @@ Where: IAM → Roles → your uploader role → Permissions → Add inline polic
       "Sid": "S3PutToPartnerBucket",
       "Effect": "Allow",
       "Action": ["s3:PutObject"],
-      "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*"
+      "Resource": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*"
     },
     { // use YOUR chosen CMK
       "Sid": "KmsEncryptForPartnerBucket",
@@ -59,7 +59,7 @@ Where: IAM → Roles → your reader role → Permissions → Add inline policy 
       "Sid": "S3ReadPartnerObjects",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:GetObjectVersion"],
-      "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*"
+      "Resource": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*"
     },
     { // decrypt with the CMK used to encrypt
       "Sid": "KmsDecryptPartnerObjects",
@@ -82,7 +82,7 @@ This safely scopes key usage to S3 in us-east-1 and (optionally) to your bucket 
   "Resource": "*",
   "Condition": {
     "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" },
-    "StringLike": { "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*" }
+    "StringLike": { "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*" }
   }
 },
 {
@@ -93,7 +93,7 @@ This safely scopes key usage to S3 in us-east-1 and (optionally) to your bucket 
   "Resource": "*",
   "Condition": {
     "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" },
-    "StringLike": { "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*" }
+    "StringLike": { "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*" }
   }
 }
 Strongly recommended (prevents future “owner/ACL” issues)
@@ -105,7 +105,7 @@ Then (optionally) enforce KMS on new writes with a Deny unless SSE-KMS with your
   "Effect": "Deny",
   "Principal": "*",
   "Action": "s3:PutObject",
-  "Resource": "arn:aws:s3:::usmg-prd-useast1-elements-to-cms-outbound-bucket/*",
+  "Resource": "arn:aws:s3:::gsm-prd-useast1-metal-to-cms-outbound-bucket/*",
   "Condition": {
     "StringNotEquals": {
       "s3:x-amz-server-side-encryption": "aws:kms",
