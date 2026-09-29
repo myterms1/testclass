@@ -61,3 +61,80 @@ With either fix, also remove the Facets pricer mapping for Elements. The chart c
 terraform-helm v20 contains **Facets-specific ingress changes**: no proxy protocol, client IP not preserved, and the pricer port. Every Elements environment you move to `v16.0.x` will get them. Once dst works, decide whether Elements keeps these settings. If apps rely on seeing the real client IP, Elements needs overrides for proxy protocol and preserve-client-IP too. Put that override block in `common.tfvars` so all environments get it.
 
 Send me the output of the `describe-target-health` command and the SG inbound rules, and I'll confirm which fix applies.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Thanks, these two outputs change the picture:
+
+- **The health check is still `HTTP / 80 / /healthz`.** The v20 setting (port 10254) never reached AWS, so the security-group-on-10254 theory is wrong.
+- `Target.FailedHealthChecks` is the generic code a Network Load Balancer uses. Unlike an ALB, it doesn't tell you whether it was a timeout or a bad response. That was my mistake earlier.
+
+## Most likely cause: proxy protocol mismatch
+
+The upgrade changed **nginx** but not the **target group**:
+
+| Side | Before | Now |
+|---|---|---|
+| ingress-nginx (`use-proxy-protocol`) | `true` | **`false`**, applied by Helm |
+| NLB target group (`proxy_protocol_v2`) | enabled | **probably still enabled** |
+
+The NLB still puts a proxy-protocol header in front of every connection. nginx no longer expects it, so it rejects both the health checks and your browser traffic. The unchanged health-check port suggests the load balancer controller didn't apply the new service settings at all.
+
+## Confirm (2 commands)
+
+```bash
+# 1. is proxy protocol still on for the target group?
+aws elbv2 describe-target-group-attributes --target-group-arn $TG \
+  --query "Attributes[?Key=='proxy_protocol_v2.enabled' || Key=='preserve_client_ip.enabled']" \
+  --output table
+
+# 2. is nginx rejecting the NLB's connections?
+kubectl -n ingress-control logs -l app.kubernetes.io/name=ingress-nginx --since=10m | grep -ciE "broken header| 400 "
+```
+
+If `proxy_protocol_v2.enabled` is **true** and you see 400s or "broken header", that confirms it.
+
+## Fix to get the UI back now
+
+Turn proxy protocol off on the target group to match nginx:
+```bash
+aws elbv2 modify-target-group-attributes --target-group-arn $TG \
+  --attributes Key=proxy_protocol_v2.enabled,Value=false
+```
+Targets should turn healthy in about 30–60 seconds. The controller won't turn it back on, because the service annotation for proxy protocol is gone.
+
+## Then find out why the controller didn't apply the settings
+
+```bash
+kubectl -n ingress-control describe svc ingress-nginx-controller | tail -20     # look for FailedDeployModel / errors
+kubectl -n ingress-control logs deploy/aws-load-balancer-controller --since=3h | grep -iE "error|ingress-nginx"
+```
+The likely culprit is the Facets pricer port `61616` pointing at `batch/pricer-networx`, which doesn't exist in Elements. Removing it for Elements with the `null` overrides from my last message should let the controller reconcile cleanly. After that, the health check will move to 10254, and you may need that security group rule after all.
+
+## Decide for Elements (before other environments)
+
+This is really the question of whether Elements keeps the v20 (Facets) ingress behavior:
+- **Keep v20 behavior:** no proxy protocol, client IP not preserved, health check on 10254. Remove the pricer port.
+- **Keep the old Elements behavior:** override `use-proxy-protocol = "true"`, the proxy-protocol annotation `"*"`, `preserve_client_ip.enabled=true`, and health-check port `80` in `common.tfvars`. Apps keep seeing real client IPs.
+
+Send me the output of the two confirm commands, and the controller errors if there are any.
