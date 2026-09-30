@@ -28,3 +28,41 @@ flowchart TD
     style E3 fill:#fff8dc,stroke:#b7950b
     style F2 fill:#fff8dc,stroke:#b7950b
     style OK fill:#d5f5e3,stroke:#1e8449
+
+==========================================
+
+
+flowchart LR
+    subgraph TF["common.tfvars lines"]
+        L1["tcp.61616 = null<br/>ports.pricer = null"]
+        L2["healthcheck-port = 80"]
+        L3["target-group-attributes =<br/>preserve_client_ip.enabled=true"]
+        L4["client-header-buffer-size<br/>large-client-header-buffers"]
+    end
+
+    subgraph K8S["Kubernetes"]
+        SVC["ingress-nginx-controller Service<br/>only port 443"]
+        NGX["nginx config<br/>big headers allowed"]
+    end
+
+    subgraph AWS["AWS - via Load Balancer Controller"]
+        NLB["NLB listener 443 only"]
+        TG["Target group<br/>health check on port 80<br/>client IP preserved"]
+    end
+
+    L1 -->|"removes port Metal does not have"| SVC
+    L2 -->|"annotation on Service"| SVC
+    L3 -->|"annotation on Service"| SVC
+    L4 --> NGX
+    SVC -->|"LB Controller reads annotations"| NLB
+    SVC --> TG
+    TG -->|"targets healthy"| OK["Metal UI works"]
+    NGX --> OK
+
+    style L1 fill:#fde2e2,stroke:#c0392b
+    style L2 fill:#e2f0fd,stroke:#2471a3
+    style L3 fill:#e2f0fd,stroke:#2471a3
+    style L4 fill:#e8f8e8,stroke:#27ae60
+    style SVC fill:#fff8dc,stroke:#b7950b
+    style NGX fill:#fff8dc,stroke:#b7950b
+    style OK fill:#d5f5e3,stroke:#1e8449
