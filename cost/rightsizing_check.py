@@ -28,7 +28,7 @@ Usage
 
   # One AWS CLI profile per account
   python rightsizing_check.py usmg-cost-saving-opportunities.xlsx \
-      --profile-map 123456789=usmg-dev 111122223333=usmg-qa \
+      --profile-map 123456789=gsm-dev 111122223333=usmg-qa \
       --weeks 4
 
   # Or assume the same read-only role in every account from one base profile
@@ -480,7 +480,7 @@ def main():
     ap.add_argument("--sheet", default=0, help="sheet name/index for .xlsx (default: first)")
     ap.add_argument("--weeks", type=int, default=4, help="full weeks to look back (default 4)")
     ap.add_argument("--profile-map", nargs="*", metavar="ACCOUNT=PROFILE",
-                    help="AWS CLI profile per account, e.g. 123456789=usmg-dev")
+                    help="AWS CLI profile per account, e.g. 123456789=gsm-dev")
     ap.add_argument("--base-profile", help="profile to use directly or to assume roles from")
     ap.add_argument("--role-name", help="role to assume in each account (e.g. ReadOnlyRole)")
     ap.add_argument("--accounts", nargs="*", help="only these account IDs")

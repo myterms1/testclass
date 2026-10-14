@@ -18,12 +18,12 @@ pip3 install boto3 pandas openpyxl
 ```
 cat ~/.aws/config
 ```
-You'll see names like `[profile usmg-dev]`, one for each account. If you sign in with SSO, run `aws sso login --profile usmg-dev` first.
+You'll see names like `[profile gsm-dev]`, one for each account. If you sign in with SSO, run `aws sso login --profile gsm-dev` first.
 
 **Step 5: Run the script**
 Pair each account number with its profile name:
 ```
-python3 rightsizing_check.py finops.xlsx --profile-map 111222333444=usmg-dev
+python3 rightsizing_check.py finops.xlsx --profile-map 111222333444=gsm-dev
 ```
 - For more accounts, add more pairs on the same line, for example `222233334444=usmg-qa`.
 - It prints progress for each server and takes a few minutes.
@@ -62,7 +62,7 @@ There is **only one script**: `rightsizing_check.py`. You run it **once**, it fi
 
 **2. Today, run the script once (about 2–10 minutes)**
 ```
-python3 rightsizing_check.py finops.xlsx --profile-map 111222333444=usmg-dev
+python3 rightsizing_check.py finops.xlsx --profile-map 111222333444=gsm-dev
 ```
 - While it runs you'll see lines like `[3/11] 111222333444 us-east-1 usmg-dst-...`, one per server.
 - When it prints **"Wrote rightsizing_check_2026-10-14.xlsx"**, it's finished and has stopped by itself.

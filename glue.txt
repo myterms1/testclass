@@ -1,9 +1,9 @@
 import requests
 
-api_url = "https://product.dev.gateway.usmg-dev.aws.zilverton.com/v1"
+api_url = "https://product.dev.gateway.gsm-dev.aws.zilverton.com/v1"
 headers = {
     "Content-Type": "application/json",
-    "Host": "product.dev.gateway.usmg-dev.aws.zilverton.com"  # Override Host Header
+    "Host": "product.dev.gateway.gsm-dev.aws.zilverton.com"  # Override Host Header
 }
 
 # Make API call while ignoring certificate errors
