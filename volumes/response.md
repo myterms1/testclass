@@ -1,8 +1,8 @@
-I've written two Python scripts, one to check and snapshot the volumes and one to delete them later. I tested them against a simulated AWS account, not your real accounts, so the dry run in usmg-dev will be their first real test.
+I've written two Python scripts, one to check and snapshot the volumes and one to delete them later. I tested them against a simulated AWS account, not your real accounts, so the dry run in gsm-dev will be their first real test.
 
-**What's in the FinOps file:** 82 rows, all in us-east-1. 81 are EBS volumes: 17 in usmg-dev (851725216779), 27 in usmg-test (084828583690) and 37 in usmg-prod (971422678837). I pulled these into `volumes.csv`, which both scripts read.
+**What's in the FinOps file:** 82 rows, all in us-east-1. 81 are EBS volumes: 17 in gsm-dev 27 in gsm-test and 37 in gsm-prod. I pulled these into `volumes.csv`, which both scripts read.
 
-**`snapshot_unused_volumes.py`** — run it with `--account usmg-dev`. For each volume it:
+**`snapshot_unused_volumes.py`** — run it with `--account gsm-dev`. For each volume it:
 - checks that the volume still exists and whether it's attached to any instance, including stopped ones;
 - creates a snapshot only if the volume is not attached;
 - skips attached volumes and records which instance each one is attached to;
